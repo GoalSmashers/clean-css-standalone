@@ -2,8 +2,7 @@
 
 var util = require("util");
   fs = require('fs'),
-  path = require('path'),
-  argv = require('optimist').argv;
+  path = require('path');
 
 var options = {
   source: null,
@@ -13,20 +12,40 @@ var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && process.stdin.readable;
 var version = "0.4.2";
 
-if (argv.o) options.target = argv.o;
-if (argv._) options.source = argv._[0];
-if (argv.e) cleanOptions.removeEmpty = true;
+// Arguments parsing (to drop optimist dependency)
+var argv = process.argv.slice(2);
+argv.has = function(option) {
+  return this.indexOf(option) > -1;
+};
+(function() {
+  var optionMatch = /^\-\-?\w/;
+  for (var i = 0, l = argv.length; i < l; i++) {
+    if (!optionMatch.test(argv[i])) {
+      var isAfterOption = i > 0 && !optionMatch.test(argv[i - 1]);
+      var isOnlyArgument = i == 0 && l == 1;
+      if (isAfterOption || isOnlyArgument) {
+        argv._ = argv.slice(i);
+        break;
+      }
+    }
+  }
+})();
 
-if (argv.v) {
+if (argv.has('-o')) options.target = argv[argv.indexOf('-o') + 1];
+if (argv._) options.source = argv._[0];
+if (argv.has('-e')) cleanOptions.removeEmpty = true;
+
+if (argv.has('-v')) {
   util.puts(version);
   process.exit(0);
 }
 
-if (argv.h || argv.help || (!fromStdin && argv._.length == 0)) {
+if (argv.has('-h') || argv.has('--help') || (!fromStdin && !argv._)) {
   util.print('usage: node clean-css.js [-e] -o <output-file> <input-file>\n');
   process.exit(0);
 }
 
+// If we got here then there's some serious work to do
 if (options.source) {
   fs.readFile(options.source, 'utf8', function(error, text) {
     if (error) throw error;
