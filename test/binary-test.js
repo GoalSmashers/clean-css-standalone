@@ -11,6 +11,24 @@ var binaryContext = function(options, context) {
   return context;
 };
 
+var fileBinaryContext = function(dataFile) {
+  return {
+    topic: function() {
+      exec("__DIRECT__=1 node ./clean-css.js -b -e ./test/data/" + dataFile, { maxBuffer: 1000 * 1024 }, this.callback);
+    },
+    'should minimize': function(error, stdout) {
+      var reference = fs.readFileSync('./test/data/' + dataFile.replace('.css', '-min.css'), 'utf-8');
+      var splitReference = reference.split('\n');
+      var splitOutput = stdout.split('\n');
+      assert.equal(splitReference.length, splitOutput.length);
+
+      splitReference.forEach(function(line, i) {
+        assert.equal(line, splitOutput[i]);
+      });
+    }
+  };
+};
+
 var pipedContext = function(css, options, context) {
   context.topic = function() {
     exec("echo \"" + css + "\" | node ./clean-css.js " + options, this.callback);
@@ -31,7 +49,7 @@ exports.commandsSuite = vows.describe('binary commands').addBatch({
   }),
   'version': binaryContext('-v', {
     'should output help': function(error, stdout) {
-      assert.equal(stdout, "0.4.2\n");
+      assert.equal(stdout, "0.8.1\n");
     }
   }),
   'stdin': pipedContext("a{color: #f00}", '', {
@@ -49,12 +67,25 @@ exports.commandsSuite = vows.describe('binary commands').addBatch({
       assert.equal(stdout, "");
     }
   }),
-  'from source': binaryContext('./test/data/reset.css', {
-    'should minimize': function(error, stdout) {
-      var minimized = fs.readFileSync('./test/data/reset-min.css', 'utf-8').replace(/\n/g, '');
-      assert.equal(stdout, minimized);
+  'all special comments': pipedContext('/*!c1*/a{}/*!c2*//*c3*/', '', {
+    'should be kept': function(error, stdout) {
+      assert.equal(stdout, "/*!c1*/a{}/*!c2*/");
     }
   }),
+  'one special comment': pipedContext('/*!c1*/a{}/*!c2*//*c3*/', '--s1', {
+    'should be kept': function(error, stdout) {
+      assert.equal(stdout, "/*!c1*/a{}");
+    }
+  }),
+  'no special comments': pipedContext('/*!c1*/a{}/*!c2*//*c3*/', '--s0', {
+    'should be kept': function(error, stdout) {
+      assert.equal(stdout, "a{}");
+    }
+  }),
+  'from source - 960.css': fileBinaryContext('960.css'),
+  'from source - big.css': fileBinaryContext('big.css'),
+  'from source - blueprint.css': fileBinaryContext('blueprint.css'),
+  'from source - reset.css': fileBinaryContext('reset.css'),
   'to file': binaryContext('-o reset-min.css ./test/data/reset.css', {
     'should give no output': function(error, stdout) {
       assert.equal(stdout, '');

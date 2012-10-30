@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && process.stdin.readable;
-var version = "0.4.2";
+var version = "0.8.1";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -21,9 +21,9 @@ argv.has = function(option) {
   var optionMatch = /^\-\-?\w/;
   for (var i = 0, l = argv.length; i < l; i++) {
     if (!optionMatch.test(argv[i])) {
-      var isAfterOption = i > 0 && !optionMatch.test(argv[i - 1]);
+      var isNotAfterOption = i > 0 && (!optionMatch.test(argv[i - 1]) || i == l - 1);
       var isOnlyArgument = i == 0 && l == 1;
-      if (isAfterOption || isOnlyArgument) {
+      if (isNotAfterOption || isOnlyArgument) {
         argv._ = argv.slice(i);
         break;
       }
@@ -32,8 +32,11 @@ argv.has = function(option) {
 })();
 
 if (argv.has('-o')) options.target = argv[argv.indexOf('-o') + 1];
-if (argv._) options.source = argv._[0];
+if (argv._ && !fromStdin) options.source = argv._[0];
 if (argv.has('-e')) cleanOptions.removeEmpty = true;
+if (argv.has('-b')) cleanOptions.keepBreaks = true;
+if (argv.has('--s1')) cleanOptions.keepSpecialComments = 1;
+if (argv.has('--s0')) cleanOptions.keepSpecialComments = 0;
 
 if (argv.has('-v')) {
   util.puts(version);
@@ -41,7 +44,12 @@ if (argv.has('-v')) {
 }
 
 if (argv.has('-h') || argv.has('--help') || (!fromStdin && !argv._)) {
-  util.print('usage: node clean-css.js [-e] -o <output-file> <input-file>\n');
+  util.puts("usage: node clean-css.js [options] -o <output-file> <input-file>\n");
+  util.puts("options:");
+  util.puts("  -e\tRemove empty declarations (e.g. a{})");
+  util.puts("  -b\tKeep line breaks");
+  util.puts("  --s0\tRemove all special comments (i.e. /*! special comment */)");
+  util.puts("  --s1\tRemove all special comments but the first one");
   process.exit(0);
 }
 
@@ -49,7 +57,7 @@ if (argv.has('-h') || argv.has('--help') || (!fromStdin && !argv._)) {
 if (options.source) {
   fs.readFile(options.source, 'utf8', function(error, text) {
     if (error) throw error;
-    output(CleanCSS.process(text));
+    output(CleanCSS.process(text, cleanOptions));
   });
 } else {
   var stdin = process.openStdin();
@@ -95,6 +103,15 @@ var CleanCSS = {
 
     options = options || {};
 
+    // * - leave all important comments
+    // 1 - leave first important comment only
+    // 0 - strip all important comments
+    options.keepSpecialComments = 'keepSpecialComments' in options ?
+      options.keepSpecialComments :
+      '*';
+
+    options.keepBreaks = options.keepBreaks || false;
+
     // replace function
     if (options.debug) {
       var originalReplace = replace;
@@ -118,20 +135,54 @@ var CleanCSS = {
       data = CleanCSS._stripContent(context, data);
     });
 
-    replace(/;\s*;+/g, ';') // whitespace between semicolons & multiple semicolons
-    replace(/\n/g, '') // line breaks
-    replace(/\s+/g, ' ') // multiple whitespace
-    replace(/ !important/g, '!important') // whitespace before !important
-    replace(/[ ]?,[ ]?/g, ',') // space with a comma
-    replace(/progid:[^(]+\(([^\)]+)/g, function(match, contents) { // restore spaces inside IE filters (IE 7 issue)
+    // strip url's parentheses if possible (no spaces inside)
+    replace(/url\(['"]([^\)]+)['"]\)/g, function(urlMatch) {
+      if (urlMatch.match(/\s/g) != null)
+        return urlMatch;
+      else
+        return urlMatch.replace(/\(['"]/, '(').replace(/['"]\)$/, ')');
+    });
+
+    // whitespace between semicolons & multiple semicolons
+    replace(/;\s*;+/g, ';');
+
+    // line breaks
+    if (!options.keepBreaks)
+      replace(/[\r]?\n/g, '');
+
+    // multiple whitespace
+    replace(/[\t ]+/g, ' ');
+
+    // multiple line breaks to one
+    replace(/ \n/g, '\n');
+    replace(/ \r\n/g, '\r\n');
+    replace(/\n+/g, '\n');
+    replace(/(\r\n)+/g, '\r\n');
+
+    // whitespace before !important
+    replace(/ !important/g, '!important')
+
+    // space with a comma
+    replace(/[ ]?,[ ]?/g, ',')
+
+    // restore spaces inside IE filters (IE 7 issue)
+    replace(/progid:[^(]+\(([^\)]+)/g, function(match, contents) {
       return match.replace(/,/g, ', ');
-    })
-    replace(/ ([+~>]) /g, '$1') // replace spaces around selectors
-    replace(/\{([^}]+)\}/g, function(match, contents) { // whitespace inside content
+    });
+
+    // replace spaces around selectors
+    replace(/ ([+~>]) /g, '$1');
+
+    // whitespace inside content
+    replace(/\{([^}]+)\}/g, function(match, contents) {
       return '{' + contents.trim().replace(/(\s*)([;:=\s])(\s*)/g, '$2') + '}';
-    })
-    replace(/;}/g, '}') // trailing semicolons
-    replace(/rgb\s*\(([^\)]+)\)/g, function(match, color) { // rgb to hex colors
+    });
+
+    // trailing semicolons
+    replace(/;}/g, '}');
+
+    // rgb to hex colors
+    replace(/rgb\s*\(([^\)]+)\)/g, function(match, color) {
       var parts = color.split(',');
       var encoded = '#';
       for (var i = 0; i < 3; i++) {
@@ -139,46 +190,98 @@ var CleanCSS = {
         encoded += asHex.length == 1 ? '0' + asHex : asHex;
       }
       return encoded;
-    })
-    replace(/([^"'=\s])\s*#([0-9a-f]{6})/gi, function(match, prefix, color) { // long hex to short hex
+    });
+
+    // long hex to short hex
+    replace(/([^"'=\s])\s*#([0-9a-f]{6})/gi, function(match, prefix, color) {
       if (color[0] == color[1] && color[2] == color[3] && color[4] == color[5])
         return (prefix + (/:$/.test(prefix) ? '' : ' ')) + '#' + color[0] + color[2] + color[4];
       else
         return (prefix + (/:$/.test(prefix) ? '' : ' ')) + '#' + color;
-    })
-    replace(/(color|background):(\w+)/g, function(match, property, colorName) { // replace standard colors with hex values (only if color name is longer then hex value)
+    });
+
+    // replace standard colors with hex values (only if color name is longer then hex value)
+    replace(/(color|background):(\w+)/g, function(match, property, colorName) {
       if (CleanCSS.colors[colorName]) return property + ':' + CleanCSS.colors[colorName];
       else return match;
-    })
-    replace(/([: ,\(])#f00/g, '$1red') // replace #f00 with red as it's shorter
-    replace(/font\-weight:(\w+)/g, function(match, weight) { // replace font weight with numerical value
+    });
+
+    // replace #f00 with red as it's shorter
+    replace(/([: ,\(])#f00/g, '$1red');
+
+    // replace font weight with numerical value
+    replace(/font\-weight:(\w+)/g, function(match, weight) {
       if (weight == 'normal') return 'font-weight:400';
       else if (weight == 'bold') return 'font-weight:700';
       else return match;
-    })
-    replace(/progid:DXImageTransform\.Microsoft\.(Alpha|Chroma)(\([^\)]+\))([;}'"])/g, function(match, filter, args, suffix) { // IE shorter filters but only if single (IE 7 issue)
+    });
+
+    // IE shorter filters but only if single (IE 7 issue)
+    replace(/progid:DXImageTransform\.Microsoft\.(Alpha|Chroma)(\([^\)]+\))([;}'"])/g, function(match, filter, args, suffix) {
       return filter.toLowerCase() + args + suffix;
-    })
-    replace(/(\s|:)0(px|em|ex|cm|mm|in|pt|pc|%)/g, '$1' + '0') // zero + unit to zero
-    replace(/(border|border-top|border-right|border-bottom|border-left|outline):none/g, '$1:0') // none to 0
-    replace(/(background):none([;}])/g, '$1:0$2') // background:none to 0
-    replace(/0 0 0 0([^\.])/g, '0$1') // multiple zeros into one
-    replace(/([: ,=\-])0\.(\d)/g, '$1.$2')
-    if (options.removeEmpty) replace(/[^}]+?{\s*?}/g, '') // empty elements
-    if (data.indexOf('charset') > 0) replace(/(.+)(@charset [^;]+;)/, '$2$1') // move first charset to the beginning
-    replace(/(.)(@charset [^;]+;)/g, '$1') // remove all extra charsets that are not at the beginning
-    replace(/\*([\.#:\[])/g, '$1') // remove universal selector when not needed (*#id, *.class etc)
-    replace(/ {/g, '{') // whitespace before definition
-    replace(/\} /g, '}') // whitespace after definition
+    });
+
+    // zero + unit to zero
+    replace(/(\s|:|,)0(px|em|ex|cm|mm|in|pt|pc|%)/g, '$1' + '0');
+    replace(/rect\(0(px|em|ex|cm|mm|in|pt|pc|%)/g, 'rect(0');
+
+    // none to 0
+    replace(/(border|border-top|border-right|border-bottom|border-left|outline):none/g, '$1:0');
+
+    // background:none to 0
+    replace(/(background):none([;}])/g, '$1:0$2');
+
+    // multiple zeros into one
+    replace(/:0 0 0 0([^\.])/g, ':0$1');
+    replace(/([: ,=\-])0\.(\d)/g, '$1.$2');
+
+    // restore rect(...) zeros syntax for 4 zeros
+    replace(/rect\(\s?0(\s|,)0[ ,]0[ ,]0\s?\)/g, 'rect(0$10$10$10)');
+
+    // empty elements
+    if (options.removeEmpty)
+      replace(/[^}]+?{\s*?}/g, '');
+
+    // move first charset to the beginning
+    if (data.indexOf('charset') > 0)
+      replace(/(.+)(@charset [^;]+;)/, '$2$1');
+
+    // remove all extra charsets that are not at the beginning
+    replace(/(.)(@charset [^;]+;)/g, '$1');
+
+    // remove universal selector when not needed (*#id, *.class etc)
+    replace(/\*([\.#:\[])/g, '$1');
+
+    // whitespace before definition
+    replace(/ {/g, '{');
+
+    // whitespace after definition
+    replace(/\} /g, '}');
 
     // Get the special comments, content content, and spaces inside calc back
+    var specialCommentsCount = context.specialComments.length;
+
     replace(/calc\([^\}]+\}/g, function(match) {
       return match.replace(/\+/g, ' + ');
     });
-    replace(/__CSSCOMMENT__/g, function() { return context.specialComments.shift(); });
-    replace(/__CSSCONTENT__/g, function() { return context.contentBlocks.shift(); });
+    replace(/__CSSCOMMENT__/g, function(i) {
+      switch (options.keepSpecialComments) {
+        case '*':
+          return context.specialComments.shift();
+        case 1:
+          return context.specialComments.length == specialCommentsCount ?
+            context.specialComments.shift() :
+            '';
+        case 0:
+          return '';
+      }
+    });
+    replace(/__CSSCONTENT__/g, function() {
+      return context.contentBlocks.shift();
+    });
 
-    return data.trim() // trim spaces at beginning and end
+    // trim spaces at beginning and end
+    return data.trim();
   },
 
   // Strips special comments (/*! ... */) by replacing them by __CSSCOMMENT__ marker
@@ -270,3 +373,4 @@ var CleanCSS = {
       data;
   }
 };
+
