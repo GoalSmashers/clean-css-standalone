@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && process.stdin.readable;
-var version = "0.8.1";
+var version = "0.8.2";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -193,11 +193,11 @@ var CleanCSS = {
     });
 
     // long hex to short hex
-    replace(/([^"'=\s])\s*#([0-9a-f]{6})/gi, function(match, prefix, color) {
+    replace(/([,: \(])#([0-9a-f]{6})/gi, function(match, prefix, color) {
       if (color[0] == color[1] && color[2] == color[3] && color[4] == color[5])
-        return (prefix + (/:$/.test(prefix) ? '' : ' ')) + '#' + color[0] + color[2] + color[4];
+        return prefix + '#' + color[0] + color[2] + color[4];
       else
-        return (prefix + (/:$/.test(prefix) ? '' : ' ')) + '#' + color;
+        return prefix + '#' + color;
     });
 
     // replace standard colors with hex values (only if color name is longer then hex value)
