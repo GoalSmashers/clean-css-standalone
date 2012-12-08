@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && process.stdin.readable;
-var version = "0.8.2";
+var version = "0.8.3";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -224,6 +224,14 @@ var CleanCSS = {
     // zero + unit to zero
     replace(/(\s|:|,)0(px|em|ex|cm|mm|in|pt|pc|%)/g, '$1' + '0');
     replace(/rect\(0(px|em|ex|cm|mm|in|pt|pc|%)/g, 'rect(0');
+
+    // restore 0% in hsl/hsla
+    replace(/(hsl|hsla)\(([^\)]+)\)/g, function(match, colorFunction, colorDef) {
+      var tokens = colorDef.split(',');
+      if (tokens[1] == "0") tokens[1] = '0%';
+      if (tokens[2] == "0") tokens[2] = '0%';
+      return colorFunction + "(" + tokens.join(',') + ")";
+    });
 
     // none to 0
     replace(/(border|border-top|border-right|border-bottom|border-left|outline):none/g, '$1:0');
