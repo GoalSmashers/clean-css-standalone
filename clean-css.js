@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && process.stdin.readable;
-var version = "0.9.0";
+var version = "0.9.1";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -246,7 +246,7 @@ var CleanCSS = {
       var colorSwitcher = function(match, prefix, colorValue, suffix) {
         return prefix + CleanCSS.colors[type][colorValue] + suffix;
       };
-      replace(new RegExp("(.)" + pattern + "([;\\}!\\) ])", 'g'), colorSwitcher);
+      replace(new RegExp("([ :,\(])" + pattern + "([;\\}!\\) ])", 'g'), colorSwitcher);
       replace(new RegExp("(,)" + pattern + "(,)", 'g'), colorSwitcher);
     });
 
