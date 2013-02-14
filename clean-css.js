@@ -117,6 +117,7 @@ var CleanCSS = {
         data = data.replace.apply(data, arguments);
     };
     var lineBreak = process.platform == 'win32' ? '\r\n' : '\n';
+    this.lineBreak = lineBreak;
 
     options = options || {};
 
@@ -165,7 +166,7 @@ var CleanCSS = {
 
     // line breaks
     if (!options.keepBreaks)
-      replace(/[\r]?\n/g, '');
+      replace(/[\r]?\n/g, ' ');
 
     // multiple whitespace
     replace(/[\t ]+/g, ' ');
@@ -185,7 +186,7 @@ var CleanCSS = {
     replace(/ ([!\)\{\};=,\n])/g, '$1');
     replace(/(?:\r\n|\n)\}/g, '}');
     replace(/([\{;,])(?:\r\n|\n)/g, '$1');
-    replace(/content :/g, 'content:');
+    replace(/ :([^\{\};]+)([;}])/g, ':$1$2');
 
     // restore spaces inside IE filters (IE 7 issue)
     replace(/progid:[^(]+\(([^\)]+)/g, function(match) {
@@ -195,7 +196,7 @@ var CleanCSS = {
     // trailing semicolons
     replace(/;\}/g, '}');
 
-    // strip quotation in animations & font names
+    // strip quotation in animation & font names
     replace(/(animation|animation\-name|font|font\-family):([^;}]+)/g, function(match, propertyName, fontDef) {
       return propertyName + ':' + fontDef.replace(/['"]([\w\-]+)['"]/g, '$1');
     });
@@ -240,13 +241,13 @@ var CleanCSS = {
         return prefix + '#' + color;
     });
 
-    // replace color name with hex values if shorter (or other way around)
+    // replace color name with hex values if shorter (or the other way around)
     ['toHex', 'toName'].forEach(function(type) {
       var pattern = "(" + Object.keys(CleanCSS.colors[type]).join('|') + ")";
       var colorSwitcher = function(match, prefix, colorValue, suffix) {
         return prefix + CleanCSS.colors[type][colorValue] + suffix;
       };
-      replace(new RegExp("([ :,\(])" + pattern + "([;\\}!\\) ])", 'g'), colorSwitcher);
+      replace(new RegExp("([ :,\\(])" + pattern + "([;\\}!\\) ])", 'g'), colorSwitcher);
       replace(new RegExp("(,)" + pattern + "(,)", 'g'), colorSwitcher);
     });
 
@@ -260,7 +261,7 @@ var CleanCSS = {
         return match;
     });
 
-    // IE shorter filters but only if single (IE 7 issue)
+    // IE shorter filters, but only if single (IE 7 issue)
     replace(/progid:DXImageTransform\.Microsoft\.(Alpha|Chroma)(\([^\)]+\))([;}'"])/g, function(match, filter, args, suffix) {
       return filter.toLowerCase() + args + suffix;
     });
@@ -268,6 +269,11 @@ var CleanCSS = {
     // zero + unit to zero
     replace(/(\s|:|,)0(?:px|em|ex|cm|mm|in|pt|pc|%)/g, '$1' + '0');
     replace(/rect\(0(?:px|em|ex|cm|mm|in|pt|pc|%)/g, 'rect(0');
+
+    // fraction zeros removal
+    replace(/\.([1-9]*)0+(\D)/g, function(match, nonZeroPart, suffix) {
+      return (nonZeroPart ? '.' : '') + nonZeroPart + suffix;
+    });
 
     // restore 0% in hsl/hsla
     replace(/(hsl|hsla)\(([^\)]+)\)/g, function(match, colorFunction, colorDef) {
@@ -329,16 +335,28 @@ var CleanCSS = {
     // restore rect(...) zeros syntax for 4 zeros
     replace(/rect\(\s?0(\s|,)0[ ,]0[ ,]0\s?\)/g, 'rect(0$10$10$10)');
 
-    // empty elements
-    if (options.removeEmpty)
-      replace(/[^\}]+?\{\}/g, '');
-
     // move first charset to the beginning
-    if (data.indexOf('charset') > 0)
-      replace(/(.+)(@charset [^;]+;)/, '$2$1');
+    replace(function moveCharset() {
+      // get first charset in stylesheet
+      var match = data.match(/@charset [^;]+;/);
+      var firstCharset = match ? match[0] : '';
 
-    // remove all extra charsets that are not at the beginning
-    replace(/(.)(?:@charset [^;]+;)/g, '$1');
+      // remove all charsets
+      data = data.replace(/@charset [^;]+;\n?/g, '');
+
+      // reattach first charset
+      if (firstCharset !== '') {
+        data = firstCharset + (options.keepBreaks ? lineBreak : '') + data;
+      }
+    });
+
+    if (options.removeEmpty) {
+      // empty elements
+      replace(/[^\{\}]+\{\}/g, '');
+
+      // empty @media declarations
+      replace(/@media [^\{]+\{\}/g, '');
+    }
 
     // remove universal selector when not needed (*#id, *.class etc)
     replace(/\*([\.#:\[])/g, '$1');
@@ -369,7 +387,7 @@ var CleanCSS = {
     return data.trim();
   },
 
-  // Strips special comments (/*! ... */) by replacing them by __CSSCOMMENT__ marker
+  // Strip special comments (/*! ... */) by replacing them by __CSSCOMMENT__ marker
   // for further restoring. Plain comments are removed. It's done by scanning datq using
   // String#indexOf scanning instead of regexps to speed up the process.
   _stripComments: function(context, data) {
@@ -398,18 +416,20 @@ var CleanCSS = {
       data;
   },
 
-  // Strips content tags by replacing them by __CSSCONTENT__ marker
-  // for further restoring. It's done via string scanning instead of
-  // regexps to speed up the process.
+  // Strip content tags by replacing them by the __CSSCONTENT__
+  // marker for further restoring. It's done via string scanning
+  // instead of regexps to speed up the process.
   _stripContent: function(context, data) {
     var tempData = [],
       nextStart = 0,
       nextEnd = 0,
       cursor = 0,
       matchedParenthesis = null;
+    var allowedPrefixes = [' ', '{', ';', this.lineBreak];
+    var skipBy = 'content'.length;
 
-    // Finds either first (matchedParenthesis == null) or second matching parenthesis
-    // so we can determine boundaries of content block.
+    // Find either first (matchedParenthesis == null) or second matching
+    // parenthesis so that we can determine boundaries of content block.
     var nextParenthesis = function(pos) {
       var min,
         max = data.length;
@@ -436,7 +456,8 @@ var CleanCSS = {
         matchedParenthesis = null;
         return min;
       } else {
-        // check if there's anything else between pos and min that doesn't match ':' or whitespace
+        // check if there's anything else between pos and min
+        // that doesn't match ':' or whitespace
         if (/[^:\s]/.test(data.substring(pos, min)))
           return -1;
 
@@ -450,7 +471,13 @@ var CleanCSS = {
       if (nextStart == -1)
         break;
 
-      nextStart = nextParenthesis(nextStart + 7);
+      // skip by `skipBy` bytes if matched declaration is not a property but ID, class name or a some substring
+      if (allowedPrefixes.indexOf(data[nextStart - 1]) == -1) {
+        nextEnd += skipBy;
+        continue;
+      }
+
+      nextStart = nextParenthesis(nextStart + skipBy);
       nextEnd = nextParenthesis(nextStart);
       if (nextStart == -1 || nextEnd == -1)
         break;
