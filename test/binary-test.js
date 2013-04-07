@@ -1,7 +1,7 @@
-var vows = require('vows'),
-  assert = require('assert'),
-  exec = require('child_process').exec,
-  fs = require('fs');
+var vows = require('vows');
+var assert = require('assert');
+var exec = require('child_process').exec;
+var fs = require('fs');
 
 var binaryContext = function(options, context) {
   context.topic = function() {
@@ -49,7 +49,7 @@ exports.commandsSuite = vows.describe('binary commands').addBatch({
   }),
   'version': binaryContext('-v', {
     'should output help': function(error, stdout) {
-      assert.equal(stdout, "0.9.1\n");
+      assert.equal(stdout, "1.0\n");
     }
   }),
   'stdin': pipedContext("a{color: #f00}", '', {
@@ -80,6 +80,16 @@ exports.commandsSuite = vows.describe('binary commands').addBatch({
   'no special comments': pipedContext('/*!c1*/a{}/*!c2*//*c3*/', '--s0', {
     'should be kept': function(error, stdout) {
       assert.equal(stdout, "a{}");
+    }
+  }),
+  'no relative to path': binaryContext('./test/data/partials-absolute/base.css', {
+    'should not be able to resolve it fully': function(error, stdout) {
+      assert.equal(stdout, '.sub{padding:0}.base{margin:0}');
+    }
+  }),
+  'relative to path': binaryContext('-r ./test/data ./test/data/partials-absolute/base.css', {
+    'should be able to resolve it': function(error, stdout) {
+      assert.equal(stdout, '.base2{border-width:0}.sub{padding:0}.base{margin:0}');
     }
   }),
   'from source - 960.css': fileBinaryContext('960.css'),

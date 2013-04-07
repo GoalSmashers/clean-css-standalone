@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 
 var util = require("util");
-  fs = require('fs'),
-  path = require('path');
+var fs = require('fs');
+var path = require('path');
+var existsSync = fs.existsSync || path.existsSync;
 
 var options = {
   source: null,
   target: null
 };
 var cleanOptions = {};
-var fromStdin = !process.env['__DIRECT__'] && process.stdin.readable;
-var version = "0.9.1";
+var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
+var version = "1.0";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -31,12 +32,22 @@ argv.has = function(option) {
   }
 })();
 
-if (argv.has('-o')) options.target = argv[argv.indexOf('-o') + 1];
-if (argv._ && !fromStdin) options.source = argv._[0];
-if (argv.has('-e')) cleanOptions.removeEmpty = true;
-if (argv.has('-b')) cleanOptions.keepBreaks = true;
-if (argv.has('--s1')) cleanOptions.keepSpecialComments = 1;
-if (argv.has('--s0')) cleanOptions.keepSpecialComments = 0;
+if (argv.has('-o'))
+  options.target = argv[argv.indexOf('-o') + 1];
+if (argv.has('-e'))
+  cleanOptions.removeEmpty = true;
+if (argv.has('-b'))
+  cleanOptions.keepBreaks = true;
+if (argv.has('--s1'))
+  cleanOptions.keepSpecialComments = 1;
+if (argv.has('--s0'))
+  cleanOptions.keepSpecialComments = 0;
+if (argv.has('-r'))
+  cleanOptions.root = argv[argv.indexOf('-r') + 1]
+if (argv._ && !fromStdin) {
+  options.source = argv._[0];
+  cleanOptions.relativeTo = path.dirname(path.resolve(options.source));
+}
 
 if (argv.has('-v')) {
   util.puts(version);
@@ -108,7 +119,8 @@ var CleanCSS = {
   process: function(data, options) {
     var context = {
       specialComments: [],
-      contentBlocks: []
+      freeTextBlocks: [],
+      urlBlocks: []
     };
     var replace = function() {
       if (typeof arguments[0] == 'function')
@@ -146,22 +158,69 @@ var CleanCSS = {
       };
     }
 
+    // replace all escaped line breaks
+    replace(/\\(\r\n|\n)/mg, '');
+
+    // inline all imports
+    replace(function inlineImports() {
+      data = CleanCSS._inlineImports(data, {
+        root: options.root || process.cwd(),
+        relativeTo: options.relativeTo
+      });
+    });
+
     // strip comments one by one
     replace(function stripComments() {
       data = CleanCSS._stripComments(context, data);
     });
 
-    // replace content: with a placeholder
-    replace(function stripContent() {
-      data = CleanCSS._stripContent(context, data);
+    // strip parentheses in urls if possible (no spaces inside)
+    replace(/url\((['"])([^\)]+)['"]\)/g, function(match, quote, url) {
+      if (url.match(/[ \t]/g) !== null)
+        return 'url(' + quote + url + quote + ')';
+      else
+        return 'url(' + url + ')';
     });
 
-    // strip url's parentheses if possible (no spaces inside)
-    replace(/url\(['"]([^\)]+)['"]\)/g, function(urlMatch) {
-      if (urlMatch.match(/\s/g) !== null)
-        return urlMatch;
+    // strip parentheses in animation & font names
+    replace(/(animation|animation\-name|font|font\-family):([^;}]+)/g, function(match, propertyName, fontDef) {
+      return propertyName + ':' + fontDef.replace(/['"]([\w\-]+)['"]/g, '$1');
+    });
+
+    // strip parentheses in @keyframes
+    replace(/@(\-moz\-|\-o\-|\-webkit\-)?keyframes ([^{]+)/g, function(match, prefix, name) {
+      prefix = prefix || '';
+      return '@' + prefix + 'keyframes ' + (name.indexOf(' ') > -1 ? name : name.replace(/['"]/g, ''));
+    });
+
+    // IE shorter filters, but only if single (IE 7 issue)
+    replace(/progid:DXImageTransform\.Microsoft\.(Alpha|Chroma)(\([^\)]+\))([;}'"])/g, function(match, filter, args, suffix) {
+      return filter.toLowerCase() + args + suffix;
+    });
+
+    // strip parentheses in attribute values
+    replace(/\[([^\]]+)\]/g, function(match, content) {
+      var eqIndex = content.indexOf('=');
+      if (eqIndex < 0 && content.indexOf('\'') < 0 && content.indexOf('"') < 0)
+        return match;
+
+      var key = content.substring(0, eqIndex);
+      var value = content.substring(eqIndex + 1, content.length);
+
+      if (/^['"](?:[a-zA-Z][a-zA-Z\d\-_]+)['"]$/.test(value))
+        return '[' + key + '=' + value.substring(1, value.length - 1) + ']';
       else
-        return urlMatch.replace(/\(['"]/, '(').replace(/['"]\)$/, ')');
+        return match;
+    });
+
+    // replace all free text content with a placeholder
+    replace(function stripFreeText() {
+      data = CleanCSS._stripFreeText(context, data);
+    });
+
+    // replace url(...) with a placeholder
+    replace(function stripUrls() {
+      data = CleanCSS._stripUrls(context, data);
     });
 
     // line breaks
@@ -182,7 +241,7 @@ var CleanCSS = {
     replace(/ ([+~>]) /g, '$1');
 
     // remove extra spaces inside content
-    replace(/([\(\{\}:;=,\n]) /g, '$1');
+    replace(/([!\(\{\}:;=,\n]) /g, '$1');
     replace(/ ([!\)\{\};=,\n])/g, '$1');
     replace(/(?:\r\n|\n)\}/g, '}');
     replace(/([\{;,])(?:\r\n|\n)/g, '$1');
@@ -196,44 +255,32 @@ var CleanCSS = {
     // trailing semicolons
     replace(/;\}/g, '}');
 
-    // strip quotation in animation & font names
-    replace(/(animation|animation\-name|font|font\-family):([^;}]+)/g, function(match, propertyName, fontDef) {
-      return propertyName + ':' + fontDef.replace(/['"]([\w\-]+)['"]/g, '$1');
-    });
+    // hsl to hex colors
+    replace(/hsl\((\d+),(\d+)%?,(\d+)%?\)/g, function(match, hue, saturation, lightness) {
+      var asRgb = CleanCSS._hslToRgb(hue, saturation, lightness);
+      var redAsHex = asRgb[0].toString(16);
+      var greenAsHex = asRgb[1].toString(16);
+      var blueAsHex = asRgb[2].toString(16);
 
-    // strip quotation in @keyframes
-    replace(/@(\-moz\-|\-o\-|\-webkit\-)?keyframes ([^{]+)/g, function(match, prefix, name) {
-      prefix = prefix || '';
-      return '@' + prefix + 'keyframes ' + (name.indexOf(' ') > -1 ? name : name.replace(/['"]/g, ''));
-    });
-
-    // strip quotation in attribute values
-    replace(/\[([^\]]+)\]/g, function(match, content) {
-      var eqIndex = content.indexOf('=');
-      if (eqIndex < 0 && content.indexOf('\'') < 0 && content.indexOf('"') < 0)
-        return match;
-
-      var key = content.substring(0, eqIndex);
-      var value = content.substring(eqIndex + 1, content.length);
-
-      if (/^['"](?:[a-zA-Z][a-zA-Z\d\-]+)['"]$/.test(value))
-        return '[' + key + '=' + value.substring(1, value.length - 1) + ']';
-      else
-        return match;
+      return '#' +
+        ((redAsHex.length == 1 ? '0' : '') + redAsHex) +
+        ((greenAsHex.length == 1 ? '0' : '') + greenAsHex) +
+        ((blueAsHex.length == 1 ? '0' : '') + blueAsHex);
     });
 
     // rgb to hex colors
-    replace(/rgb\s*\(([^\)]+)\)/g, function(match, color) {
-      var parts = color.split(',');
-      var encoded = '#';
-      for (var i = 0; i < 3; i++) {
-        var asHex = parseInt(parts[i], 10).toString(16);
-        encoded += asHex.length == 1 ? '0' + asHex : asHex;
-      }
-      return encoded;
+    replace(/rgb\((\d+),(\d+),(\d+)\)/g, function(match, red, green, blue) {
+      var redAsHex = parseInt(red, 10).toString(16);
+      var greenAsHex = parseInt(green, 10).toString(16);
+      var blueAsHex = parseInt(blue, 10).toString(16);
+
+      return '#' +
+        ((redAsHex.length == 1 ? '0' : '') + redAsHex) +
+        ((greenAsHex.length == 1 ? '0' : '') + greenAsHex) +
+        ((blueAsHex.length == 1 ? '0' : '') + blueAsHex);
     });
 
-    // long color hex to short hex
+    // long hex to short hex colors
     replace(/([,: \(])#([0-9a-f]{6})/gi, function(match, prefix, color) {
       if (color[0] == color[1] && color[2] == color[3] && color[4] == color[5])
         return prefix + '#' + color[0] + color[2] + color[4];
@@ -243,12 +290,12 @@ var CleanCSS = {
 
     // replace color name with hex values if shorter (or the other way around)
     ['toHex', 'toName'].forEach(function(type) {
-      var pattern = "(" + Object.keys(CleanCSS.colors[type]).join('|') + ")";
+      var pattern = '(' + Object.keys(CleanCSS.colors[type]).join('|') + ')';
       var colorSwitcher = function(match, prefix, colorValue, suffix) {
-        return prefix + CleanCSS.colors[type][colorValue] + suffix;
+        return prefix + CleanCSS.colors[type][colorValue.toLowerCase()] + suffix;
       };
-      replace(new RegExp("([ :,\\(])" + pattern + "([;\\}!\\) ])", 'g'), colorSwitcher);
-      replace(new RegExp("(,)" + pattern + "(,)", 'g'), colorSwitcher);
+      replace(new RegExp('([ :,\\(])' + pattern + '([;\\}!\\) ])', 'ig'), colorSwitcher);
+      replace(new RegExp('(,)' + pattern + '(,)', 'ig'), colorSwitcher);
     });
 
     // replace font weight with numerical value
@@ -259,11 +306,6 @@ var CleanCSS = {
         return property + ':700' + suffix;
       else
         return match;
-    });
-
-    // IE shorter filters, but only if single (IE 7 issue)
-    replace(/progid:DXImageTransform\.Microsoft\.(Alpha|Chroma)(\([^\)]+\))([;}'"])/g, function(match, filter, args, suffix) {
-      return filter.toLowerCase() + args + suffix;
     });
 
     // zero + unit to zero
@@ -278,9 +320,11 @@ var CleanCSS = {
     // restore 0% in hsl/hsla
     replace(/(hsl|hsla)\(([^\)]+)\)/g, function(match, colorFunction, colorDef) {
       var tokens = colorDef.split(',');
-      if (tokens[1] == "0") tokens[1] = '0%';
-      if (tokens[2] == "0") tokens[2] = '0%';
-      return colorFunction + "(" + tokens.join(',') + ")";
+      if (tokens[1] == '0')
+        tokens[1] = '0%';
+      if (tokens[2] == '0')
+        tokens[2] = '0%';
+      return colorFunction + '(' + tokens.join(',') + ')';
     });
 
     // none to 0
@@ -295,9 +339,9 @@ var CleanCSS = {
 
     // shorthand notations
     var shorthandRegex = function(repeats, hasSuffix) {
-      var pattern = "(padding|margin|border\\-width|border\\-color|border\\-style|border\\-radius):";
+      var pattern = '(padding|margin|border\\-width|border\\-color|border\\-style|border\\-radius):';
       for (var i = 0; i < repeats; i++) {
-        pattern += "([\\d\\w\\.%#\\(\\),]+)" + (i < repeats - 1 ? ' ' : '');
+        pattern += '([\\d\\w\\.%#\\(\\),]+)' + (i < repeats - 1 ? ' ' : '');
       }
       return new RegExp(pattern + (hasSuffix ? '([;}])' : ''), 'g');
     };
@@ -308,7 +352,7 @@ var CleanCSS = {
         return property + ':' + size1;
       else if (size1 === size3 && size2 === size4)
         return property + ':' + size1 + ' ' + size2;
-      else if (size2 == size4)
+      else if (size2 === size4)
         return property + ':' + size1 + ' ' + size2 + ' ' + size3;
       else
         return match;
@@ -327,28 +371,13 @@ var CleanCSS = {
     // same 2 values into one
     replace(shorthandRegex(2, true), function(match, property, size1, size2, suffix) {
       if (size1 === size2)
-        return property + ":" + size1 + suffix;
+        return property + ':' + size1 + suffix;
       else
         return match;
     });
 
     // restore rect(...) zeros syntax for 4 zeros
     replace(/rect\(\s?0(\s|,)0[ ,]0[ ,]0\s?\)/g, 'rect(0$10$10$10)');
-
-    // move first charset to the beginning
-    replace(function moveCharset() {
-      // get first charset in stylesheet
-      var match = data.match(/@charset [^;]+;/);
-      var firstCharset = match ? match[0] : '';
-
-      // remove all charsets
-      data = data.replace(/@charset [^;]+;\n?/g, '');
-
-      // reattach first charset
-      if (firstCharset !== '') {
-        data = firstCharset + (options.keepBreaks ? lineBreak : '') + data;
-      }
-    });
 
     if (options.removeEmpty) {
       // empty elements
@@ -361,40 +390,118 @@ var CleanCSS = {
     // remove universal selector when not needed (*#id, *.class etc)
     replace(/\*([\.#:\[])/g, '$1');
 
-    // Restore special comments, content content, and spaces inside calc back
-    var specialCommentsCount = context.specialComments.length;
-
+    // Restore spaces inside calc back
     replace(/calc\([^\}]+\}/g, function(match) {
       return match.replace(/\+/g, ' + ');
     });
-    replace(/__CSSCOMMENT__/g, function() {
+
+    // Restore urls, content content, and special comments (in that order)
+    replace(/__URL__/g, function() {
+      return context.urlBlocks.shift();
+    });
+
+    replace(/__CSSFREETEXT__/g, function() {
+      return context.freeTextBlocks.shift();
+    });
+
+    var specialCommentsCount = context.specialComments.length;
+    var breakSuffix = options.keepBreaks ? lineBreak : '';
+    replace(new RegExp('__CSSCOMMENT__(' + lineBreak + '| )?', 'g'), function() {
       switch (options.keepSpecialComments) {
         case '*':
-          return context.specialComments.shift();
+          return context.specialComments.shift() + breakSuffix;
         case 1:
           return context.specialComments.length == specialCommentsCount ?
-            context.specialComments.shift() :
+            context.specialComments.shift() + breakSuffix :
             '';
         case 0:
           return '';
       }
     });
-    replace(/__CSSCONTENT__/g, function() {
-      return context.contentBlocks.shift();
+
+    // move first charset to the beginning
+    replace(function moveCharset() {
+      // get first charset in stylesheet
+      var match = data.match(/@charset [^;]+;/);
+      var firstCharset = match ? match[0] : null;
+      if (!firstCharset)
+        return;
+
+      // reattach first charset and remove all subsequent
+      data = firstCharset +
+        (options.keepBreaks ? lineBreak : '') +
+        data.replace(new RegExp('@charset [^;]+;(' + lineBreak + ')?', 'g'), '');
     });
 
     // trim spaces at beginning and end
     return data.trim();
   },
 
+  // Inlines all imports taking care of repetitions, unknown files, and cilcular dependencies
+  _inlineImports: function(data, options) {
+    var tempData = [];
+    var nextStart = 0;
+    var nextEnd = 0;
+    var cursor = 0;
+
+    options.relativeTo = options.relativeTo || options.root;
+    options.visited = options.visited || [];
+
+    var inlinedFile = function() {
+      var importedFile = data
+        .substring(data.indexOf('(', nextStart) + 1, nextEnd)
+        .replace(/['"]/g, '');
+
+      if (/^(http|https):\/\//.test(importedFile))
+        return "@import url(" + importedFile + ");";
+
+      var relativeTo = importedFile[0] == '/' ?
+        options.root :
+        options.relativeTo;
+
+      var fullPath = path.resolve(path.join(relativeTo, importedFile));
+
+      if (existsSync(fullPath) && fs.statSync(fullPath).isFile() && options.visited.indexOf(fullPath) == -1) {
+        options.visited.push(fullPath);
+
+        var importedData = fs.readFileSync(fullPath, 'utf8');
+        return CleanCSS._inlineImports(importedData, {
+          root: options.root,
+          relativeTo: path.dirname(fullPath),
+          visited: options.visited
+        });
+      } else {
+        return '';
+      }
+    };
+
+    for (; nextEnd < data.length; ) {
+      nextStart = data.indexOf('@import url(', cursor);
+      if (nextStart == -1)
+        break;
+
+      nextEnd = data.indexOf(')', nextStart);
+      if (nextEnd == -1)
+        break;
+
+      tempData.push(data.substring(cursor, nextStart));
+      tempData.push(inlinedFile());
+      cursor = nextEnd + 2;
+    }
+
+    return tempData.length > 0 ?
+      tempData.join('') + data.substring(cursor, data.length) :
+      data;
+  },
+
   // Strip special comments (/*! ... */) by replacing them by __CSSCOMMENT__ marker
   // for further restoring. Plain comments are removed. It's done by scanning datq using
   // String#indexOf scanning instead of regexps to speed up the process.
   _stripComments: function(context, data) {
-    var tempData = [],
-      nextStart = 0,
-      nextEnd = 0,
-      cursor = 0;
+    var tempData = [];
+    var nextStart = 0;
+    var nextEnd = 0;
+    var cursor = 0;
 
     for (; nextEnd < data.length; ) {
       nextStart = data.indexOf('/*', nextEnd);
@@ -416,80 +523,111 @@ var CleanCSS = {
       data;
   },
 
-  // Strip content tags by replacing them by the __CSSCONTENT__
+  // Strip content tags by replacing them by the __CSSFREETEXT__
   // marker for further restoring. It's done via string scanning
   // instead of regexps to speed up the process.
-  _stripContent: function(context, data) {
-    var tempData = [],
-      nextStart = 0,
-      nextEnd = 0,
-      cursor = 0,
-      matchedParenthesis = null;
-    var allowedPrefixes = [' ', '{', ';', this.lineBreak];
-    var skipBy = 'content'.length;
-
-    // Find either first (matchedParenthesis == null) or second matching
-    // parenthesis so that we can determine boundaries of content block.
-    var nextParenthesis = function(pos) {
-      var min,
-        max = data.length;
-
-      if (matchedParenthesis) {
-        min = data.indexOf(matchedParenthesis, pos);
-        if (min == -1)
-          min = max;
-      } else {
-        var next1 = data.indexOf("'", pos);
-        var next2 = data.indexOf('"', pos);
-        if (next1 == -1)
-          next1 = max;
-        if (next2 == -1)
-          next2 = max;
-
-        min = next1 > next2 ? next2 : next1;
-      }
-
-      if (min == max)
-        return -1;
-
-      if (matchedParenthesis) {
-        matchedParenthesis = null;
-        return min;
-      } else {
-        // check if there's anything else between pos and min
-        // that doesn't match ':' or whitespace
-        if (/[^:\s]/.test(data.substring(pos, min)))
-          return -1;
-
-        matchedParenthesis = data.charAt(min);
-        return min + 1;
-      }
-    };
+  _stripFreeText: function(context, data) {
+    var tempData = [];
+    var nextStart = 0;
+    var nextEnd = 0;
+    var cursor = 0;
+    var matchedParenthesis = null;
+    var singleParenthesis = "'";
+    var doubleParenthesis = '"';
+    var dataLength = data.length;
 
     for (; nextEnd < data.length; ) {
-      nextStart = data.indexOf('content', nextEnd);
+      var nextStartSingle = data.indexOf(singleParenthesis, nextEnd + 1);
+      var nextStartDouble = data.indexOf(doubleParenthesis, nextEnd + 1);
+
+      if (nextStartSingle == -1)
+        nextStartSingle = dataLength;
+      if (nextStartDouble == -1)
+        nextStartDouble = dataLength;
+
+      if (nextStartSingle < nextStartDouble) {
+        nextStart = nextStartSingle;
+        matchedParenthesis = singleParenthesis;
+      } else {
+        nextStart = nextStartDouble;
+        matchedParenthesis = doubleParenthesis;
+      }
+
       if (nextStart == -1)
         break;
 
-      // skip by `skipBy` bytes if matched declaration is not a property but ID, class name or a some substring
-      if (allowedPrefixes.indexOf(data[nextStart - 1]) == -1) {
-        nextEnd += skipBy;
-        continue;
-      }
-
-      nextStart = nextParenthesis(nextStart + skipBy);
-      nextEnd = nextParenthesis(nextStart);
+      nextEnd = data.indexOf(matchedParenthesis, nextStart + 1);
       if (nextStart == -1 || nextEnd == -1)
         break;
 
-      tempData.push(data.substring(cursor, nextStart - 1));
-      tempData.push('__CSSCONTENT__');
-      context.contentBlocks.push(data.substring(nextStart - 1, nextEnd + 1));
+      tempData.push(data.substring(cursor, nextStart));
+      tempData.push('__CSSFREETEXT__');
+      context.freeTextBlocks.push(data.substring(nextStart, nextEnd + 1));
       cursor = nextEnd + 1;
     }
 
     return tempData.length > 0 ?
       tempData.join('') + data.substring(cursor, data.length) :
       data;
+  },
+
+  // Strip urls by replacing them by the __URL__
+  // marker for further restoring. It's done via string scanning
+  // instead of regexps to speed up the process.
+  _stripUrls: function(context, data) {
+    var nextStart = 0;
+    var nextEnd = 0;
+    var cursor = 0;
+    var tempData = [];
+
+    for (; nextEnd < data.length; ) {
+      nextStart = data.indexOf('url(', nextEnd);
+      if (nextStart == -1)
+        break;
+
+      nextEnd = data.indexOf(')', nextStart);
+
+      tempData.push(data.substring(cursor, nextStart));
+      tempData.push('__URL__');
+      context.urlBlocks.push(data.substring(nextStart, nextEnd + 1));
+      cursor = nextEnd + 1;
+    }
+
+    return tempData.length > 0 ?
+      tempData.join('') + data.substring(cursor, data.length) :
+      data;
+  },
+
+  // HSL to RGB converter. Both methods taken and adapted from:
+  // http://mjijackson.com/2008/02/rgb-to-hsl-and-rgb-to-hsv-color-model-conversion-algorithms-in-javascript
+  _hslToRgb: function(h, s, l) {
+    var r, g, b;
+
+    h = ~~h / 360;
+    s = ~~s / 100;
+    l = ~~l / 100;
+
+    if (s === 0) {
+      r = g = b = l; // achromatic
+    } else {
+      var q = l < 0.5 ?
+        l * (1 + s) :
+        l + s - l * s;
+      var p = 2 * l - q;
+      r = this._hueToRgb(p, q, h + 1/3);
+      g = this._hueToRgb(p, q, h);
+      b = this._hueToRgb(p, q, h - 1/3);
+    }
+
+    return [~~(r * 255), ~~(g * 255), ~~(b * 255)];
+  },
+
+  _hueToRgb: function(p, q, t) {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
   }
 };
