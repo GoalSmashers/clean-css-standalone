@@ -379,14 +379,6 @@ var CleanCSS = {
     // restore rect(...) zeros syntax for 4 zeros
     replace(/rect\(\s?0(\s|,)0[ ,]0[ ,]0\s?\)/g, 'rect(0$10$10$10)');
 
-    if (options.removeEmpty) {
-      // empty elements
-      replace(/[^\{\}]+\{\}/g, '');
-
-      // empty @media declarations
-      replace(/@media [^\{]+\{\}/g, '');
-    }
-
     // remove universal selector when not needed (*#id, *.class etc)
     replace(/\*([\.#:\[])/g, '$1');
 
@@ -433,6 +425,14 @@ var CleanCSS = {
         data.replace(new RegExp('@charset [^;]+;(' + lineBreak + ')?', 'g'), '');
     });
 
+    if (options.removeEmpty) {
+      // empty elements
+      replace(/[^\{\}]+\{\}/g, '');
+
+      // empty @media declarations
+      replace(/@media [^\{]+\{\}/g, '');
+    }
+
     // trim spaces at beginning and end
     return data.trim();
   },
@@ -453,7 +453,7 @@ var CleanCSS = {
         .replace(/['"]/g, '');
 
       if (/^(http|https):\/\//.test(importedFile))
-        return "@import url(" + importedFile + ");";
+        return '@import url(' + importedFile + ');';
 
       var relativeTo = importedFile[0] == '/' ?
         options.root :
