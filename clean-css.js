@@ -11,7 +11,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = "1.0";
+var version = "1.0.4";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -445,11 +445,14 @@ var CleanCSS = {
     var cursor = 0;
 
     options.relativeTo = options.relativeTo || options.root;
+    options._baseRelativeTo = options._baseRelativeTo || options.relativeTo;
     options.visited = options.visited || [];
 
     var inlinedFile = function() {
       var importedFile = data
-        .substring(data.indexOf('(', nextStart) + 1, nextEnd)
+        .substring(data.indexOf(' ', nextStart) + 1, nextEnd)
+        .replace(/^url\(/, '')
+        .replace(/\)$/, '')
         .replace(/['"]/g, '');
 
       if (/^(http|https):\/\//.test(importedFile))
@@ -465,9 +468,12 @@ var CleanCSS = {
         options.visited.push(fullPath);
 
         var importedData = fs.readFileSync(fullPath, 'utf8');
+        var importRelativeTo = path.dirname(fullPath);
+        importedData = CleanCSS._rebaseRelativeURLs(importedData, importRelativeTo, options._baseRelativeTo);
         return CleanCSS._inlineImports(importedData, {
           root: options.root,
-          relativeTo: path.dirname(fullPath),
+          relativeTo: importRelativeTo,
+          _baseRelativeTo: options.baseRelativeTo,
           visited: options.visited
         });
       } else {
@@ -476,17 +482,45 @@ var CleanCSS = {
     };
 
     for (; nextEnd < data.length; ) {
-      nextStart = data.indexOf('@import url(', cursor);
+      nextStart = data.indexOf('@import', cursor);
       if (nextStart == -1)
         break;
 
-      nextEnd = data.indexOf(')', nextStart);
+      nextEnd = data.indexOf(';', nextStart);
       if (nextEnd == -1)
         break;
 
       tempData.push(data.substring(cursor, nextStart));
       tempData.push(inlinedFile());
-      cursor = nextEnd + 2;
+      cursor = nextEnd + 1;
+    }
+
+    return tempData.length > 0 ?
+      tempData.join('') + data.substring(cursor, data.length) :
+      data;
+  },
+
+  _rebaseRelativeURLs: function(data, fromBase, toBase) {
+    var tempData = [];
+    var nextStart = 0;
+    var nextEnd = 0;
+    var cursor = 0;
+
+    for (; nextEnd < data.length; ) {
+      nextStart = data.indexOf('url(', nextEnd);
+      if (nextStart == -1)
+        break;
+      nextEnd = data.indexOf(')', nextStart + 4);
+      if (nextEnd == -1)
+        break;
+
+      tempData.push(data.substring(cursor, nextStart));
+      var url = data.substring(nextStart + 4, nextEnd).replace(/['"]/g, '');
+      if (url[0] != '/' && url.substring(url.length - 4) != '.css') {
+        url = path.relative(toBase, path.join(fromBase, url)).replace(/\\/g, '/');
+      }
+      tempData.push('url(' + url + ')');
+      cursor = nextEnd + 1;
     }
 
     return tempData.length > 0 ?
