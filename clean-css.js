@@ -11,7 +11,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = "1.0.4";
+var version = "1.0.6";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -176,7 +176,7 @@ var CleanCSS = {
 
     // strip parentheses in urls if possible (no spaces inside)
     replace(/url\((['"])([^\)]+)['"]\)/g, function(match, quote, url) {
-      if (url.match(/[ \t]/g) !== null)
+      if (url.match(/[ \t]/g) !== null || url.indexOf('data:') === 0)
         return 'url(' + quote + url + quote + ')';
       else
         return 'url(' + url + ')';
@@ -516,7 +516,7 @@ var CleanCSS = {
 
       tempData.push(data.substring(cursor, nextStart));
       var url = data.substring(nextStart + 4, nextEnd).replace(/['"]/g, '');
-      if (url[0] != '/' && url.substring(url.length - 4) != '.css') {
+      if (url[0] != '/' && url.indexOf('data:') !== 0 && url.substring(url.length - 4) != '.css') {
         url = path.relative(toBase, path.join(fromBase, url)).replace(/\\/g, '/');
       }
       tempData.push('url(' + url + ')');
