@@ -11,7 +11,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = "1.0.8";
+var version = "1.0.9";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -161,17 +161,17 @@ var CleanCSS = {
     // replace all escaped line breaks
     replace(/\\(\r\n|\n)/mg, '');
 
+    // strip comments one by one
+    replace(function stripComments() {
+      data = CleanCSS._stripComments(context, data);
+    });
+
     // inline all imports
     replace(function inlineImports() {
       data = CleanCSS._inlineImports(data, {
         root: options.root || process.cwd(),
         relativeTo: options.relativeTo
       });
-    });
-
-    // strip comments one by one
-    replace(function stripComments() {
-      data = CleanCSS._stripComments(context, data);
     });
 
     // strip parentheses in urls if possible (no spaces inside)
