@@ -11,7 +11,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = "1.0.7";
+var version = "1.0.8";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -334,6 +334,7 @@ var CleanCSS = {
     replace(/(background):none([;}])/g, '$1:0$2');
 
     // multiple zeros into one
+    replace(/box-shadow:0 0 0 0([^\.])/g, 'box-shadow:0 0$1');
     replace(/:0 0 0 0([^\.])/g, ':0$1');
     replace(/([: ,=\-])0\.(\d)/g, '$1.$2');
 
