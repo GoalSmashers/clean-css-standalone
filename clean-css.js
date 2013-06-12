@@ -11,7 +11,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = "1.0.6";
+var version = "1.0.7";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -455,7 +455,7 @@ var CleanCSS = {
         .replace(/\)$/, '')
         .replace(/['"]/g, '');
 
-      if (/^(http|https):\/\//.test(importedFile))
+      if (/^(http|https):\/\//.test(importedFile) || /^\/\//.test(importedFile))
         return '@import url(' + importedFile + ');';
 
       var relativeTo = importedFile[0] == '/' ?
