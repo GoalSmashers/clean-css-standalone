@@ -11,7 +11,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = "1.0.10";
+var version = "1.0.11";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -164,10 +164,10 @@ var CleanCSS = {
       });
     };
 
+    removeComments();
+
     // replace all escaped line breaks
     replace(/\\(\r\n|\n)/mg, '');
-
-    removeComments();
 
     // inline all imports
     replace(function inlineImports() {
