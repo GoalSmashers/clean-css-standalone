@@ -11,7 +11,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = "1.0.11";
+var version = "1.0.12";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -42,6 +42,8 @@ if (argv.has('--s1'))
   cleanOptions.keepSpecialComments = 1;
 if (argv.has('--s0'))
   cleanOptions.keepSpecialComments = 0;
+if (argv.has('-s'))
+  cleanOptions.processImport = false;
 if (argv.has('-r'))
   cleanOptions.root = argv[argv.indexOf('-r') + 1]
 if (argv._ && !fromStdin) {
@@ -61,6 +63,7 @@ if (argv.has('-h') || argv.has('--help') || (!fromStdin && !argv._)) {
   util.puts("  -b\tKeep line breaks");
   util.puts("  --s0\tRemove all special comments (i.e. /*! special comment */)");
   util.puts("  --s1\tRemove all special comments but the first one");
+  util.puts("  -s\tDisable the @import processing");
   process.exit(0);
 }
 
@@ -142,6 +145,11 @@ var CleanCSS = {
 
     options.keepBreaks = options.keepBreaks || false;
 
+    //active by default
+    if (options.processImport === undefined) {
+      options.processImport = true;
+    }
+
     // replace function
     if (options.debug) {
       var originalReplace = replace;
@@ -169,17 +177,20 @@ var CleanCSS = {
     // replace all escaped line breaks
     replace(/\\(\r\n|\n)/mg, '');
 
-    // inline all imports
-    replace(function inlineImports() {
-      data = CleanCSS._inlineImports(data, {
-        root: options.root || process.cwd(),
-        relativeTo: options.relativeTo
+    if (options.processImport) {
+      // inline all imports
+      replace(function inlineImports() {
+        data = CleanCSS._inlineImports(data, {
+          root: options.root || process.cwd(),
+          relativeTo: options.relativeTo
+        });
       });
-    });
 
-    // strip comments with inlined imports
-    if (data.indexOf('/*') > -1)
-      removeComments();
+      // strip comments with inlined imports
+      if (data.indexOf('/*') > -1) {
+        removeComments();
+      }
+    }
 
     // strip parentheses in urls if possible (no spaces inside)
     replace(/url\((['"])([^\)]+)['"]\)/g, function(match, quote, url) {
