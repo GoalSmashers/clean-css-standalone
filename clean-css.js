@@ -3,7 +3,6 @@
 var util = require("util");
 var fs = require('fs');
 var path = require('path');
-var existsSync = fs.existsSync || path.existsSync;
 
 var options = {
   source: null,
@@ -11,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = "1.0.12";
+var version = "1.1.0";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -33,7 +32,7 @@ argv.has = function(option) {
 })();
 
 if (argv.has('-o'))
-  options.target = argv[argv.indexOf('-o') + 1];
+  cleanOptions.target = options.target = argv[argv.indexOf('-o') + 1];
 if (argv.has('-e'))
   cleanOptions.removeEmpty = true;
 if (argv.has('-b'))
@@ -64,67 +63,746 @@ if (argv.has('-h') || argv.has('--help') || (!fromStdin && !argv._)) {
   util.puts("  --s0\tRemove all special comments (i.e. /*! special comment */)");
   util.puts("  --s1\tRemove all special comments but the first one");
   util.puts("  -s\tDisable the @import processing");
+  util.puts("  -r\tSet a root path to which resolve absolute @import rules");
+  util.puts("  -d\tShow debug information (minification time & compression efficiency)");
   process.exit(0);
 }
 
 // If we got here then there's some serious work to do
 if (options.source) {
-  fs.readFile(options.source, 'utf8', function(error, text) {
-    if (error) throw error;
-    output(CleanCSS.process(text, cleanOptions));
+  fs.readFile(options.source, 'utf8', function(error, data) {
+    if (error)
+      throw error;
+    output(minify(data));
   });
 } else {
   var stdin = process.openStdin();
   stdin.setEncoding('utf-8');
-  var text = '';
+  var data = '';
   stdin.on('data', function(chunk) {
-    text += chunk;
+    data += chunk;
   });
   stdin.on('end', function() {
-    output(CleanCSS.process(text, cleanOptions));
+    output(minify(data));
   });
 }
 
-function output(cleaned) {
-  if (options.target) {
-    fs.writeFileSync(options.target, cleaned, 'utf8');
+function minify(data) {
+  var minified;
+
+  if (options.debug) {
+    var start = process.hrtime();
+    minified = CleanCSS.process(data, cleanOptions);
+    var taken = process.hrtime(start);
+
+    console.error('Minification time: %dms', ~~(taken[0] * 1e3 + taken[1] / 1e6));
+    console.error('Compression efficiency: %d%', ~~((1 - minified.length / CleanCSS.originalSize) * 100));
   } else {
-    process.stdout.write(cleaned);
+    minified = CleanCSS.process(data, cleanOptions);
   }
+
+  return minified;
+}
+
+function output(minified) {
+  if (options.target)
+    fs.writeFileSync(options.target, minified, 'utf8');
+  else
+    process.stdout.write(minified);
 };
 
 
 // CleanCSS
 
-var CleanCSS = {
-  colors: {
-    toHex: {
-      aqua: '#0ff',
-      black: '#000',
-      blue: '#00f',
-      fuchsia: '#f0f',
-      white: '#fff',
-      yellow: '#ff0'
-    },
-    toName: {
-      '#000080': 'navy',
-      '#008000': 'green',
-      '#008080': 'teal',
-      '#800000': 'maroon',
-      '#800080': 'purple',
-      '#808000': 'olive',
-      '#808080': 'gray',
-      '#c0c0c0': 'silver',
-      '#f00': 'red'
+var ColorShortener = function Shortener(data) {
+  var COLORS = {
+    aliceblue: '#f0f8ff',
+    antiquewhite: '#faebd7',
+    aqua: '#0ff',
+    aquamarine: '#7fffd4',
+    azure: '#f0ffff',
+    beige: '#f5f5dc',
+    bisque: '#ffe4c4',
+    black: '#000',
+    blanchedalmond: '#ffebcd',
+    blue: '#00f',
+    blueviolet: '#8a2be2',
+    brown: '#a52a2a',
+    burlywood: '#deb887',
+    cadetblue: '#5f9ea0',
+    chartreuse: '#7fff00',
+    chocolate: '#d2691e',
+    coral: '#ff7f50',
+    cornflowerblue: '#6495ed',
+    cornsilk: '#fff8dc',
+    crimson: '#dc143c',
+    cyan: '#0ff',
+    darkblue: '#00008b',
+    darkcyan: '#008b8b',
+    darkgoldenrod: '#b8860b',
+    darkgray: '#a9a9a9',
+    darkgreen: '#006400',
+    darkkhaki: '#bdb76b',
+    darkmagenta: '#8b008b',
+    darkolivegreen: '#556b2f',
+    darkorange: '#ff8c00',
+    darkorchid: '#9932cc',
+    darkred: '#8b0000',
+    darksalmon: '#e9967a',
+    darkseagreen: '#8fbc8f',
+    darkslateblue: '#483d8b',
+    darkslategray: '#2f4f4f',
+    darkturquoise: '#00ced1',
+    darkviolet: '#9400d3',
+    deeppink: '#ff1493',
+    deepskyblue: '#00bfff',
+    dimgray: '#696969',
+    dodgerblue: '#1e90ff',
+    firebrick: '#b22222',
+    floralwhite: '#fffaf0',
+    forestgreen: '#228b22',
+    fuchsia: '#f0f',
+    gainsboro: '#dcdcdc',
+    ghostwhite: '#f8f8ff',
+    gold: '#ffd700',
+    goldenrod: '#daa520',
+    gray: '#808080',
+    green: '#008000',
+    greenyellow: '#adff2f',
+    honeydew: '#f0fff0',
+    hotpink: '#ff69b4',
+    indianred: '#cd5c5c',
+    indigo: '#4b0082',
+    ivory: '#fffff0',
+    khaki: '#f0e68c',
+    lavender: '#e6e6fa',
+    lavenderblush: '#fff0f5',
+    lawngreen: '#7cfc00',
+    lemonchiffon: '#fffacd',
+    lightblue: '#add8e6',
+    lightcoral: '#f08080',
+    lightcyan: '#e0ffff',
+    lightgoldenrodyellow: '#fafad2',
+    lightgray: '#d3d3d3',
+    lightgreen: '#90ee90',
+    lightpink: '#ffb6c1',
+    lightsalmon: '#ffa07a',
+    lightseagreen: '#20b2aa',
+    lightskyblue: '#87cefa',
+    lightslategray: '#778899',
+    lightsteelblue: '#b0c4de',
+    lightyellow: '#ffffe0',
+    lime: '#0f0',
+    limegreen: '#32cd32',
+    linen: '#faf0e6',
+    magenta: '#ff00ff',
+    maroon: '#800000',
+    mediumaquamarine: '#66cdaa',
+    mediumblue: '#0000cd',
+    mediumorchid: '#ba55d3',
+    mediumpurple: '#9370db',
+    mediumseagreen: '#3cb371',
+    mediumslateblue: '#7b68ee',
+    mediumspringgreen: '#00fa9a',
+    mediumturquoise: '#48d1cc',
+    mediumvioletred: '#c71585',
+    midnightblue: '#191970',
+    mintcream: '#f5fffa',
+    mistyrose: '#ffe4e1',
+    moccasin: '#ffe4b5',
+    navajowhite: '#ffdead',
+    navy: '#000080',
+    oldlace: '#fdf5e6',
+    olive: '#808000',
+    olivedrab: '#6b8e23',
+    orange: '#ffa500',
+    orangered: '#ff4500',
+    orchid: '#da70d6',
+    palegoldenrod: '#eee8aa',
+    palegreen: '#98fb98',
+    paleturquoise: '#afeeee',
+    palevioletred: '#db7093',
+    papayawhip: '#ffefd5',
+    peachpuff: '#ffdab9',
+    peru: '#cd853f',
+    pink: '#ffc0cb',
+    plum: '#dda0dd',
+    powderblue: '#b0e0e6',
+    purple: '#800080',
+    red: '#f00',
+    rosybrown: '#bc8f8f',
+    royalblue: '#4169e1',
+    saddlebrown: '#8b4513',
+    salmon: '#fa8072',
+    sandybrown: '#f4a460',
+    seagreen: '#2e8b57',
+    seashell: '#fff5ee',
+    sienna: '#a0522d',
+    silver: '#c0c0c0',
+    skyblue: '#87ceeb',
+    slateblue: '#6a5acd',
+    slategray: '#708090',
+    snow: '#fffafa',
+    springgreen: '#00ff7f',
+    steelblue: '#4682b4',
+    tan: '#d2b48c',
+    teal: '#008080',
+    thistle: '#d8bfd8',
+    tomato: '#ff6347',
+    turquoise: '#40e0d0',
+    violet: '#ee82ee',
+    wheat: '#f5deb3',
+    white: '#fff',
+    whitesmoke: '#f5f5f5',
+    yellow: '#ff0',
+    yellowgreen: '#9acd32'
+  };
+
+  var toHex = {};
+  var toName = {};
+
+  for (var name in COLORS) {
+    var color = COLORS[name];
+    if (name.length < color.length)
+      toName[color] = name;
+    else
+      toHex[name] = color;
+  }
+
+  return {
+    toHex: toHex,
+    toName: toName,
+
+    // replace color name with hex values if shorter (or the other way around)
+    process: function() {
+      [toHex, toName].forEach(function(conversion) {
+        var pattern = '(' + Object.keys(conversion).join('|') + ')';
+        var colorSwitcher = function(match, prefix, colorValue, suffix) {
+          return prefix + conversion[colorValue.toLowerCase()] + suffix;
+        };
+        data = data.replace(new RegExp('([ :,\\(])' + pattern + '([;\\}!\\) ])', 'ig'), colorSwitcher);
+        data = data.replace(new RegExp('(,)' + pattern + '(,)', 'ig'), colorSwitcher);
+      });
+
+      return data;
     }
+  };
+};
+
+var ColorHSLToHex = function HSLToHex(data) {
+  // HSL to RGB converter. Both methods adapted from:
+  // http://mjijackson.com/2008/02/rgb-to-hsl-and-rgb-to-hsv-color-model-conversion-algorithms-in-javascript
+  var hslToRgb = function(h, s, l) {
+    var r, g, b;
+
+    h = ~~h / 360;
+    s = ~~s / 100;
+    l = ~~l / 100;
+
+    if (s === 0) {
+      r = g = b = l; // achromatic
+    } else {
+      var q = l < 0.5 ?
+        l * (1 + s) :
+        l + s - l * s;
+      var p = 2 * l - q;
+      r = hueToRgb(p, q, h + 1/3);
+      g = hueToRgb(p, q, h);
+      b = hueToRgb(p, q, h - 1/3);
+    }
+
+    return [~~(r * 255), ~~(g * 255), ~~(b * 255)];
+  };
+
+  var hueToRgb = function(p, q, t) {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+
+  return {
+    process: function() {
+      return data.replace(/hsl\((\d+),(\d+)%?,(\d+)%?\)/g, function(match, hue, saturation, lightness) {
+        var asRgb = hslToRgb(hue, saturation, lightness);
+        var redAsHex = asRgb[0].toString(16);
+        var greenAsHex = asRgb[1].toString(16);
+        var blueAsHex = asRgb[2].toString(16);
+
+        return '#' +
+          ((redAsHex.length == 1 ? '0' : '') + redAsHex) +
+          ((greenAsHex.length == 1 ? '0' : '') + greenAsHex) +
+          ((blueAsHex.length == 1 ? '0' : '') + blueAsHex);
+      });
+    }
+  };
+};
+
+var ColorRGBToHex = function RGBToHex(data) {
+  return {
+    process: function() {
+      return data.replace(/rgb\((\d+),(\d+),(\d+)\)/g, function(match, red, green, blue) {
+        var redAsHex = parseInt(red, 10).toString(16);
+        var greenAsHex = parseInt(green, 10).toString(16);
+        var blueAsHex = parseInt(blue, 10).toString(16);
+
+        return '#' +
+          ((redAsHex.length == 1 ? '0' : '') + redAsHex) +
+          ((greenAsHex.length == 1 ? '0' : '') + greenAsHex) +
+          ((blueAsHex.length == 1 ? '0' : '') + blueAsHex);
+      });
+    }
+  };
+};
+
+var ColorLongToShortHex = function LongToShortHex(data) {
+  return {
+    process: function() {
+      return data.replace(/([,: \(])#([0-9a-f]{6})/gi, function(match, prefix, color) {
+        if (color[0] == color[1] && color[2] == color[3] && color[4] == color[5])
+          return prefix + '#' + color[0] + color[2] + color[4];
+        else
+          return prefix + '#' + color;
+      });
+    }
+  };
+};
+
+var ShorthandNotations = function ShorthandNotations(data) {
+  // shorthand notations
+  var shorthandRegex = function(repeats, hasSuffix) {
+    var pattern = '(padding|margin|border\\-width|border\\-color|border\\-style|border\\-radius):';
+    for (var i = 0; i < repeats; i++)
+      pattern += '([\\d\\w\\.%#\\(\\),]+)' + (i < repeats - 1 ? ' ' : '');
+    return new RegExp(pattern + (hasSuffix ? '([;}])' : ''), 'g');
+  };
+
+  var from4Values = function() {
+    return data.replace(shorthandRegex(4), function(match, property, size1, size2, size3, size4) {
+      if (size1 === size2 && size1 === size3 && size1 === size4)
+        return property + ':' + size1;
+      else if (size1 === size3 && size2 === size4)
+        return property + ':' + size1 + ' ' + size2;
+      else if (size2 === size4)
+        return property + ':' + size1 + ' ' + size2 + ' ' + size3;
+      else
+        return match;
+    });
+  };
+
+  var from3Values = function() {
+    return data.replace(shorthandRegex(3, true), function(match, property, size1, size2, size3, suffix) {
+      if (size1 === size2 && size1 === size3)
+        return property + ':' + size1 + suffix;
+      else if (size1 === size3)
+        return property + ':' + size1 + ' ' + size2 + suffix;
+      else
+        return match;
+    });
+  };
+
+  var from2Values = function() {
+    return data.replace(shorthandRegex(2, true), function(match, property, size1, size2, suffix) {
+      if (size1 === size2)
+        return property + ':' + size1 + suffix;
+      else
+        return match;
+    });
+  };
+
+  return {
+    process: function() {
+      data = from4Values();
+      data = from3Values();
+      return from2Values();
+    }
+  };
+};
+
+var ImportInliner = function Inliner() {
+  var process = function(data, options) {
+    var tempData = [];
+    var nextStart = 0;
+    var nextEnd = 0;
+    var cursor = 0;
+
+    options.relativeTo = options.relativeTo || options.root;
+    options._baseRelativeTo = options._baseRelativeTo || options.relativeTo;
+    options.visited = options.visited || [];
+
+    for (; nextEnd < data.length; ) {
+      nextStart = data.indexOf('@import', cursor);
+      if (nextStart == -1)
+        break;
+
+      nextEnd = data.indexOf(';', nextStart);
+      if (nextEnd == -1)
+        break;
+
+      tempData.push(data.substring(cursor, nextStart));
+      tempData.push(inlinedFile(data, nextStart, nextEnd, options));
+      cursor = nextEnd + 1;
+    }
+
+    return tempData.length > 0 ?
+      tempData.join('') + data.substring(cursor, data.length) :
+      data;
+  };
+
+  var inlinedFile = function(data, nextStart, nextEnd, options) {
+    var strippedImport = data
+      .substring(data.indexOf(' ', nextStart) + 1, nextEnd)
+      .replace(/^url\(/, '')
+      .replace(/['"]/g, '');
+
+    var separatorIndex = strippedImport.indexOf(' ');
+    var importedFile = strippedImport
+      .substring(0, separatorIndex > 0 ? separatorIndex : strippedImport.length)
+      .replace(')', '');
+    var mediaQuery = strippedImport
+      .substring(importedFile.length + 1)
+      .trim();
+
+    if (/^(http|https):\/\//.test(importedFile) || /^\/\//.test(importedFile))
+      return '@import url(' + importedFile + ')' + (mediaQuery.length > 0 ? ' ' + mediaQuery : '') + ';';
+
+    var relativeTo = importedFile[0] == '/' ?
+      options.root :
+      options.relativeTo;
+
+    var fullPath = path.resolve(path.join(relativeTo, importedFile));
+
+    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile())
+      throw new Error('Broken @import declaration of "' + importedFile + '"');
+
+    if (options.visited.indexOf(fullPath) != -1)
+      return '';
+
+    options.visited.push(fullPath);
+
+    var importedData = fs.readFileSync(fullPath, 'utf8');
+    var importRelativeTo = path.dirname(fullPath);
+    importedData = UrlRewriter.process(importedData, {
+      relative: true,
+      fromBase: importRelativeTo,
+      toBase: options._baseRelativeTo
+    });
+
+    var inlinedData = process(importedData, {
+      root: options.root,
+      relativeTo: importRelativeTo,
+      _baseRelativeTo: options.baseRelativeTo,
+      visited: options.visited
+    });
+    return mediaQuery.length > 0 ?
+      '@media ' + mediaQuery + '{' + inlinedData + '}' :
+      inlinedData;
+  };
+
+  return {
+    // Inlines all imports taking care of repetitions, unknown files, and circular dependencies
+    process: process
+  };
+};
+
+var UrlRewriter = {
+  process: function(data, options) {
+    var tempData = [];
+    var nextStart = 0;
+    var nextEnd = 0;
+    var cursor = 0;
+
+    for (; nextEnd < data.length; ) {
+      nextStart = data.indexOf('url(', nextEnd);
+      if (nextStart == -1)
+        break;
+
+      nextEnd = data.indexOf(')', nextStart + 4);
+      if (nextEnd == -1)
+        break;
+
+      tempData.push(data.substring(cursor, nextStart));
+      var url = data.substring(nextStart + 4, nextEnd).replace(/['"]/g, '');
+      tempData.push('url(' + this._rebased(url, options) + ')');
+      cursor = nextEnd + 1;
+    }
+
+    return tempData.length > 0 ?
+      tempData.join('') + data.substring(cursor, data.length) :
+      data;
   },
 
+  _rebased: function(url, options) {
+    var specialUrl = url[0] == '/' ||
+      url.substring(url.length - 4) == '.css' ||
+      url.indexOf('data:') === 0 ||
+      /^https?:\/\//.exec(url) !== null ||
+      /__\w+__/.exec(url) !== null;
+    var rebased;
+
+    if (specialUrl)
+      return url;
+
+    if (!options.absolute && !options.relative)
+      throw new Error('Relative url found: \'' + url + '\' but there is no way to resolve it (hint: use `root` or `output` options)');
+
+    if (!options.fromBase || !options.toBase)
+      return url;
+
+    if (options.absolute) {
+      rebased = path
+        .resolve(path.join(options.fromBase, url))
+        .replace(options.toBase, '');
+    } else {
+      rebased = path.relative(options.toBase, path.join(options.fromBase, url));
+    }
+
+    return process.platform == 'win32' ?
+      rebased.replace(/\\/g, '/') :
+      rebased;
+  }
+};
+
+var UrlRebase = {
   process: function(data, options) {
-    var context = {
-      specialComments: [],
-      freeTextBlocks: [],
-      urlBlocks: []
+    var rebaseOpts = {
+      absolute: !!options.root,
+      relative: !options.root && !!options.target,
+      fromBase: options.relativeTo
     };
+
+    if (rebaseOpts.absolute)
+      rebaseOpts.toBase = path.resolve(options.root);
+
+    if (rebaseOpts.relative)
+      rebaseOpts.toBase = path.resolve(path.dirname(options.target));
+
+    return UrlRewriter.process(data, rebaseOpts);
+  }
+};
+
+
+var CommentsProcessor = function Comments(keepSpecialComments, keepBreaks, lineBreak) {
+  var comments = [];
+
+  return {
+    // Strip special comments (/*! ... */) by replacing them by __CSSCOMMENT__ marker
+    // for further restoring. Plain comments are removed. It's done by scanning data using
+    // String#indexOf scanning instead of regexps to speed up the process.
+    escape: function(data) {
+      var tempData = [];
+      var nextStart = 0;
+      var nextEnd = 0;
+      var cursor = 0;
+
+      for (; nextEnd < data.length; ) {
+        nextStart = data.indexOf('/*', nextEnd);
+        nextEnd = data.indexOf('*/', nextStart + 2);
+        if (nextStart == -1 || nextEnd == -1)
+          break;
+
+        tempData.push(data.substring(cursor, nextStart));
+        if (data[nextStart + 2] == '!') {
+          // in case of special comments, replace them with a placeholder
+          comments.push(data.substring(nextStart, nextEnd + 2));
+          tempData.push('__CSSCOMMENT__');
+        }
+        cursor = nextEnd + 2;
+      }
+
+      return tempData.length > 0 ?
+        tempData.join('') + data.substring(cursor, data.length) :
+        data;
+    },
+
+    restore: function(data) {
+      var commentsCount = comments.length;
+      var breakSuffix = keepBreaks ? lineBreak : '';
+
+      return data.replace(new RegExp('__CSSCOMMENT__(' + lineBreak + '| )?', 'g'), function() {
+        switch (keepSpecialComments) {
+          case '*':
+            return comments.shift() + breakSuffix;
+          case 1:
+            return comments.length == commentsCount ?
+              comments.shift() + breakSuffix :
+              '';
+          case 0:
+            return '';
+        }
+      });
+    }
+  };
+};
+
+var ExpressionsProcessor = function Expressions() {
+  var expressions = [];
+
+  var findEnd = function(data, start) {
+    var end = start + 'expression'.length;
+    var level = 0;
+    var quoted = false;
+
+    while(true) {
+      var next = data[end++];
+
+      if (quoted) {
+        quoted = next != '\'' && next != '"';
+      } else {
+        quoted = next == '\'' || next == '"';
+
+        if (next == '(')
+          level++;
+        if (next == ')')
+          level--;
+      }
+
+      if (level === 0 || !next)
+        break;
+    }
+
+    return end;
+  };
+
+  return {
+    // Escapes expressions by replacing them by the __EXPRESSION__
+    // marker for further restoring. It's done via string scanning
+    // instead of regexps to speed up the process.
+    escape: function(data) {
+      var nextStart = 0;
+      var nextEnd = 0;
+      var cursor = 0;
+      var tempData = [];
+
+      for (; nextEnd < data.length; ) {
+        nextStart = data.indexOf('expression(', nextEnd);
+        if (nextStart == -1)
+          break;
+
+        nextEnd = findEnd(data, nextStart);
+
+        tempData.push(data.substring(cursor, nextStart));
+        tempData.push('__EXPRESSION__');
+        expressions.push(data.substring(nextStart, nextEnd));
+        cursor = nextEnd;
+      }
+
+      return tempData.length > 0 ?
+        tempData.join('') + data.substring(cursor, data.length) :
+        data;
+    },
+
+    restore: function(data) {
+      return data.replace(/__EXPRESSION__/g, function() {
+        return expressions.shift();
+      });
+    }
+  };
+};
+
+var FreeTextProcessor = function Free() {
+  var texts = [];
+
+  return {
+    // Strip content tags by replacing them by the __CSSFREETEXT__
+    // marker for further restoring. It's done via string scanning
+    // instead of regexps to speed up the process.
+    escape: function(data) {
+      var tempData = [];
+      var nextStart = 0;
+      var nextEnd = 0;
+      var cursor = 0;
+      var matchedParenthesis = null;
+      var singleParenthesis = "'";
+      var doubleParenthesis = '"';
+      var dataLength = data.length;
+
+      for (; nextEnd < data.length; ) {
+        var nextStartSingle = data.indexOf(singleParenthesis, nextEnd + 1);
+        var nextStartDouble = data.indexOf(doubleParenthesis, nextEnd + 1);
+
+        if (nextStartSingle == -1)
+          nextStartSingle = dataLength;
+        if (nextStartDouble == -1)
+          nextStartDouble = dataLength;
+
+        if (nextStartSingle < nextStartDouble) {
+          nextStart = nextStartSingle;
+          matchedParenthesis = singleParenthesis;
+        } else {
+          nextStart = nextStartDouble;
+          matchedParenthesis = doubleParenthesis;
+        }
+
+        if (nextStart == -1)
+          break;
+
+        nextEnd = data.indexOf(matchedParenthesis, nextStart + 1);
+        if (nextStart == -1 || nextEnd == -1)
+          break;
+
+        tempData.push(data.substring(cursor, nextStart));
+        tempData.push('__CSSFREETEXT__');
+        texts.push(data.substring(nextStart, nextEnd + 1));
+        cursor = nextEnd + 1;
+      }
+
+      return tempData.length > 0 ?
+        tempData.join('') + data.substring(cursor, data.length) :
+        data;
+    },
+
+    restore: function(data) {
+      return data.replace(/__CSSFREETEXT__/g, function() {
+        return texts.shift();
+      });
+    }
+  };
+};
+
+var UrlsProcessor = function Urls() {
+  var urls = [];
+
+  return {
+    // Strip urls by replacing them by the __URL__
+    // marker for further restoring. It's done via string scanning
+    // instead of regexps to speed up the process.
+    escape: function(data) {
+      var nextStart = 0;
+      var nextEnd = 0;
+      var cursor = 0;
+      var tempData = [];
+
+      for (; nextEnd < data.length; ) {
+        nextStart = data.indexOf('url(', nextEnd);
+        if (nextStart == -1)
+          break;
+
+        nextEnd = data.indexOf(')', nextStart);
+
+        tempData.push(data.substring(cursor, nextStart));
+        tempData.push('__URL__');
+        urls.push(data.substring(nextStart, nextEnd + 1));
+        cursor = nextEnd + 1;
+      }
+
+      return tempData.length > 0 ?
+        tempData.join('') + data.substring(cursor, data.length) :
+        data;
+    },
+
+    restore: function(data) {
+      return data.replace(/__URL__/g, function() {
+        return urls.shift();
+      });
+    }
+  };
+};
+
+var CleanCSS = {
+  process: function(data, options) {
     var replace = function() {
       if (typeof arguments[0] == 'function')
         arguments[0]();
@@ -135,23 +813,14 @@ var CleanCSS = {
     this.lineBreak = lineBreak;
 
     options = options || {};
-
-    // * - leave all important comments
-    // 1 - leave first important comment only
-    // 0 - strip all important comments
-    options.keepSpecialComments = 'keepSpecialComments' in options ?
-      options.keepSpecialComments :
-      '*';
-
     options.keepBreaks = options.keepBreaks || false;
 
     //active by default
-    if (options.processImport === undefined) {
+    if (options.processImport === undefined)
       options.processImport = true;
-    }
 
     // replace function
-    if (options.debug) {
+    if (options.benchmark) {
       var originalReplace = replace;
       replace = function(pattern, replacement) {
         var name = typeof pattern == 'function' ?
@@ -166,31 +835,34 @@ var CleanCSS = {
       };
     }
 
-    var removeComments = function() {
-      replace(function stripComments() {
-        data = CleanCSS._stripComments(context, data);
-      });
-    };
-
-    removeComments();
-
-    // replace all escaped line breaks
-    replace(/\\(\r\n|\n)/mg, '');
+    var commentsProcessor = new CommentsProcessor(
+      'keepSpecialComments' in options ? options.keepSpecialComments : '*',
+      options.keepBreaks,
+      lineBreak
+    );
+    var expressionsProcessor = new ExpressionsProcessor();
+    var freeTextProcessor = new FreeTextProcessor();
+    var urlsProcessor = new UrlsProcessor();
+    var importInliner = new ImportInliner();
 
     if (options.processImport) {
       // inline all imports
       replace(function inlineImports() {
-        data = CleanCSS._inlineImports(data, {
+        data = importInliner.process(data, {
           root: options.root || process.cwd(),
           relativeTo: options.relativeTo
         });
       });
-
-      // strip comments with inlined imports
-      if (data.indexOf('/*') > -1) {
-        removeComments();
-      }
     }
+
+    this.originalSize = data.length;
+
+    replace(function escapeComments() {
+      data = commentsProcessor.escape(data);
+    });
+
+    // replace all escaped line breaks
+    replace(/\\(\r\n|\n)/mg, '');
 
     // strip parentheses in urls if possible (no spaces inside)
     replace(/url\((['"])([^\)]+)['"]\)/g, function(match, quote, url) {
@@ -216,6 +888,10 @@ var CleanCSS = {
       return filter.toLowerCase() + args + suffix;
     });
 
+    replace(function escapeExpressions() {
+      data = expressionsProcessor.escape(data);
+    });
+
     // strip parentheses in attribute values
     replace(/\[([^\]]+)\]/g, function(match, content) {
       var eqIndex = content.indexOf('=');
@@ -231,14 +907,12 @@ var CleanCSS = {
         return match;
     });
 
-    // replace all free text content with a placeholder
-    replace(function stripFreeText() {
-      data = CleanCSS._stripFreeText(context, data);
+    replace(function escapeFreeText() {
+      data = freeTextProcessor.escape(data);
     });
 
-    // replace url(...) with a placeholder
-    replace(function stripUrls() {
-      data = CleanCSS._stripUrls(context, data);
+    replace(function escapeUrls() {
+      data = urlsProcessor.escape(data);
     });
 
     // line breaks
@@ -273,47 +947,20 @@ var CleanCSS = {
     // trailing semicolons
     replace(/;\}/g, '}');
 
-    // hsl to hex colors
-    replace(/hsl\((\d+),(\d+)%?,(\d+)%?\)/g, function(match, hue, saturation, lightness) {
-      var asRgb = CleanCSS._hslToRgb(hue, saturation, lightness);
-      var redAsHex = asRgb[0].toString(16);
-      var greenAsHex = asRgb[1].toString(16);
-      var blueAsHex = asRgb[2].toString(16);
-
-      return '#' +
-        ((redAsHex.length == 1 ? '0' : '') + redAsHex) +
-        ((greenAsHex.length == 1 ? '0' : '') + greenAsHex) +
-        ((blueAsHex.length == 1 ? '0' : '') + blueAsHex);
+    replace(function hsl2Hex() {
+      data = new ColorHSLToHex(data).process();
     });
 
-    // rgb to hex colors
-    replace(/rgb\((\d+),(\d+),(\d+)\)/g, function(match, red, green, blue) {
-      var redAsHex = parseInt(red, 10).toString(16);
-      var greenAsHex = parseInt(green, 10).toString(16);
-      var blueAsHex = parseInt(blue, 10).toString(16);
-
-      return '#' +
-        ((redAsHex.length == 1 ? '0' : '') + redAsHex) +
-        ((greenAsHex.length == 1 ? '0' : '') + greenAsHex) +
-        ((blueAsHex.length == 1 ? '0' : '') + blueAsHex);
+    replace(function rgb2Hex() {
+      data = new ColorRGBToHex(data).process();
     });
 
-    // long hex to short hex colors
-    replace(/([,: \(])#([0-9a-f]{6})/gi, function(match, prefix, color) {
-      if (color[0] == color[1] && color[2] == color[3] && color[4] == color[5])
-        return prefix + '#' + color[0] + color[2] + color[4];
-      else
-        return prefix + '#' + color;
+    replace(function longToShortHex() {
+      data = new ColorLongToShortHex(data).process();
     });
 
-    // replace color name with hex values if shorter (or the other way around)
-    ['toHex', 'toName'].forEach(function(type) {
-      var pattern = '(' + Object.keys(CleanCSS.colors[type]).join('|') + ')';
-      var colorSwitcher = function(match, prefix, colorValue, suffix) {
-        return prefix + CleanCSS.colors[type][colorValue.toLowerCase()] + suffix;
-      };
-      replace(new RegExp('([ :,\\(])' + pattern + '([;\\}!\\) ])', 'ig'), colorSwitcher);
-      replace(new RegExp('(,)' + pattern + '(,)', 'ig'), colorSwitcher);
+    replace(function shortenColors() {
+      data = new ColorShortener(data).process();
     });
 
     // replace font weight with numerical value
@@ -356,43 +1003,8 @@ var CleanCSS = {
     replace(/:0 0 0 0([^\.])/g, ':0$1');
     replace(/([: ,=\-])0\.(\d)/g, '$1.$2');
 
-    // shorthand notations
-    var shorthandRegex = function(repeats, hasSuffix) {
-      var pattern = '(padding|margin|border\\-width|border\\-color|border\\-style|border\\-radius):';
-      for (var i = 0; i < repeats; i++) {
-        pattern += '([\\d\\w\\.%#\\(\\),]+)' + (i < repeats - 1 ? ' ' : '');
-      }
-      return new RegExp(pattern + (hasSuffix ? '([;}])' : ''), 'g');
-    };
-
-    // 4 size values into less
-    replace(shorthandRegex(4), function(match, property, size1, size2, size3, size4) {
-      if (size1 === size2 && size1 === size3 && size1 === size4)
-        return property + ':' + size1;
-      else if (size1 === size3 && size2 === size4)
-        return property + ':' + size1 + ' ' + size2;
-      else if (size2 === size4)
-        return property + ':' + size1 + ' ' + size2 + ' ' + size3;
-      else
-        return match;
-    });
-
-    // 3 size values into less
-    replace(shorthandRegex(3, true), function(match, property, size1, size2, size3, suffix) {
-      if (size1 === size2 && size1 === size3)
-        return property + ':' + size1 + suffix;
-      else if (size1 === size3)
-        return property + ':' + size1 + ' ' + size2 + suffix;
-      else
-        return match;
-    });
-
-    // same 2 values into one
-    replace(shorthandRegex(2, true), function(match, property, size1, size2, suffix) {
-      if (size1 === size2)
-        return property + ':' + size1 + suffix;
-      else
-        return match;
+    replace(function shorthandNotations() {
+      data = new ShorthandNotations(data).process();
     });
 
     // restore rect(...) zeros syntax for 4 zeros
@@ -406,28 +1018,20 @@ var CleanCSS = {
       return match.replace(/\+/g, ' + ');
     });
 
-    // Restore urls, content content, and special comments (in that order)
-    replace(/__URL__/g, function() {
-      return context.urlBlocks.shift();
+    replace(function restoreUrls() {
+      data = urlsProcessor.restore(data);
     });
-
-    replace(/__CSSFREETEXT__/g, function() {
-      return context.freeTextBlocks.shift();
+    replace(function rebaseUrls() {
+      data = UrlRebase.process(data, options);
     });
-
-    var specialCommentsCount = context.specialComments.length;
-    var breakSuffix = options.keepBreaks ? lineBreak : '';
-    replace(new RegExp('__CSSCOMMENT__(' + lineBreak + '| )?', 'g'), function() {
-      switch (options.keepSpecialComments) {
-        case '*':
-          return context.specialComments.shift() + breakSuffix;
-        case 1:
-          return context.specialComments.length == specialCommentsCount ?
-            context.specialComments.shift() + breakSuffix :
-            '';
-        case 0:
-          return '';
-      }
+    replace(function restoreFreeText() {
+      data = freeTextProcessor.restore(data);
+    });
+    replace(function restoreComments() {
+      data = commentsProcessor.restore(data);
+    });
+    replace(function restoreExpressions() {
+      data = expressionsProcessor.restore(data);
     });
 
     // move first charset to the beginning
@@ -454,233 +1058,5 @@ var CleanCSS = {
 
     // trim spaces at beginning and end
     return data.trim();
-  },
-
-  // Inlines all imports taking care of repetitions, unknown files, and cilcular dependencies
-  _inlineImports: function(data, options) {
-    var tempData = [];
-    var nextStart = 0;
-    var nextEnd = 0;
-    var cursor = 0;
-
-    options.relativeTo = options.relativeTo || options.root;
-    options._baseRelativeTo = options._baseRelativeTo || options.relativeTo;
-    options.visited = options.visited || [];
-
-    var inlinedFile = function() {
-      var importedFile = data
-        .substring(data.indexOf(' ', nextStart) + 1, nextEnd)
-        .replace(/^url\(/, '')
-        .replace(/\)$/, '')
-        .replace(/['"]/g, '');
-
-      if (/^(http|https):\/\//.test(importedFile) || /^\/\//.test(importedFile))
-        return '@import url(' + importedFile + ');';
-
-      var relativeTo = importedFile[0] == '/' ?
-        options.root :
-        options.relativeTo;
-
-      var fullPath = path.resolve(path.join(relativeTo, importedFile));
-
-      if (existsSync(fullPath) && fs.statSync(fullPath).isFile() && options.visited.indexOf(fullPath) == -1) {
-        options.visited.push(fullPath);
-
-        var importedData = fs.readFileSync(fullPath, 'utf8');
-        var importRelativeTo = path.dirname(fullPath);
-        importedData = CleanCSS._rebaseRelativeURLs(importedData, importRelativeTo, options._baseRelativeTo);
-        return CleanCSS._inlineImports(importedData, {
-          root: options.root,
-          relativeTo: importRelativeTo,
-          _baseRelativeTo: options.baseRelativeTo,
-          visited: options.visited
-        });
-      } else {
-        return '';
-      }
-    };
-
-    for (; nextEnd < data.length; ) {
-      nextStart = data.indexOf('@import', cursor);
-      if (nextStart == -1)
-        break;
-
-      nextEnd = data.indexOf(';', nextStart);
-      if (nextEnd == -1)
-        break;
-
-      tempData.push(data.substring(cursor, nextStart));
-      tempData.push(inlinedFile());
-      cursor = nextEnd + 1;
-    }
-
-    return tempData.length > 0 ?
-      tempData.join('') + data.substring(cursor, data.length) :
-      data;
-  },
-
-  _rebaseRelativeURLs: function(data, fromBase, toBase) {
-    var tempData = [];
-    var nextStart = 0;
-    var nextEnd = 0;
-    var cursor = 0;
-
-    for (; nextEnd < data.length; ) {
-      nextStart = data.indexOf('url(', nextEnd);
-      if (nextStart == -1)
-        break;
-      nextEnd = data.indexOf(')', nextStart + 4);
-      if (nextEnd == -1)
-        break;
-
-      tempData.push(data.substring(cursor, nextStart));
-      var url = data.substring(nextStart + 4, nextEnd).replace(/['"]/g, '');
-      if (url[0] != '/' && url.indexOf('data:') !== 0 && url.substring(url.length - 4) != '.css') {
-        url = path.relative(toBase, path.join(fromBase, url)).replace(/\\/g, '/');
-      }
-      tempData.push('url(' + url + ')');
-      cursor = nextEnd + 1;
-    }
-
-    return tempData.length > 0 ?
-      tempData.join('') + data.substring(cursor, data.length) :
-      data;
-  },
-
-  // Strip special comments (/*! ... */) by replacing them by __CSSCOMMENT__ marker
-  // for further restoring. Plain comments are removed. It's done by scanning datq using
-  // String#indexOf scanning instead of regexps to speed up the process.
-  _stripComments: function(context, data) {
-    var tempData = [];
-    var nextStart = 0;
-    var nextEnd = 0;
-    var cursor = 0;
-
-    for (; nextEnd < data.length; ) {
-      nextStart = data.indexOf('/*', nextEnd);
-      nextEnd = data.indexOf('*/', nextStart + 2);
-      if (nextStart == -1 || nextEnd == -1)
-        break;
-
-      tempData.push(data.substring(cursor, nextStart));
-      if (data[nextStart + 2] == '!') {
-        // in case of special comments, replace them with a placeholder
-        context.specialComments.push(data.substring(nextStart, nextEnd + 2));
-        tempData.push('__CSSCOMMENT__');
-      }
-      cursor = nextEnd + 2;
-    }
-
-    return tempData.length > 0 ?
-      tempData.join('') + data.substring(cursor, data.length) :
-      data;
-  },
-
-  // Strip content tags by replacing them by the __CSSFREETEXT__
-  // marker for further restoring. It's done via string scanning
-  // instead of regexps to speed up the process.
-  _stripFreeText: function(context, data) {
-    var tempData = [];
-    var nextStart = 0;
-    var nextEnd = 0;
-    var cursor = 0;
-    var matchedParenthesis = null;
-    var singleParenthesis = "'";
-    var doubleParenthesis = '"';
-    var dataLength = data.length;
-
-    for (; nextEnd < data.length; ) {
-      var nextStartSingle = data.indexOf(singleParenthesis, nextEnd + 1);
-      var nextStartDouble = data.indexOf(doubleParenthesis, nextEnd + 1);
-
-      if (nextStartSingle == -1)
-        nextStartSingle = dataLength;
-      if (nextStartDouble == -1)
-        nextStartDouble = dataLength;
-
-      if (nextStartSingle < nextStartDouble) {
-        nextStart = nextStartSingle;
-        matchedParenthesis = singleParenthesis;
-      } else {
-        nextStart = nextStartDouble;
-        matchedParenthesis = doubleParenthesis;
-      }
-
-      if (nextStart == -1)
-        break;
-
-      nextEnd = data.indexOf(matchedParenthesis, nextStart + 1);
-      if (nextStart == -1 || nextEnd == -1)
-        break;
-
-      tempData.push(data.substring(cursor, nextStart));
-      tempData.push('__CSSFREETEXT__');
-      context.freeTextBlocks.push(data.substring(nextStart, nextEnd + 1));
-      cursor = nextEnd + 1;
-    }
-
-    return tempData.length > 0 ?
-      tempData.join('') + data.substring(cursor, data.length) :
-      data;
-  },
-
-  // Strip urls by replacing them by the __URL__
-  // marker for further restoring. It's done via string scanning
-  // instead of regexps to speed up the process.
-  _stripUrls: function(context, data) {
-    var nextStart = 0;
-    var nextEnd = 0;
-    var cursor = 0;
-    var tempData = [];
-
-    for (; nextEnd < data.length; ) {
-      nextStart = data.indexOf('url(', nextEnd);
-      if (nextStart == -1)
-        break;
-
-      nextEnd = data.indexOf(')', nextStart);
-
-      tempData.push(data.substring(cursor, nextStart));
-      tempData.push('__URL__');
-      context.urlBlocks.push(data.substring(nextStart, nextEnd + 1));
-      cursor = nextEnd + 1;
-    }
-
-    return tempData.length > 0 ?
-      tempData.join('') + data.substring(cursor, data.length) :
-      data;
-  },
-
-  // HSL to RGB converter. Both methods taken and adapted from:
-  // http://mjijackson.com/2008/02/rgb-to-hsl-and-rgb-to-hsv-color-model-conversion-algorithms-in-javascript
-  _hslToRgb: function(h, s, l) {
-    var r, g, b;
-
-    h = ~~h / 360;
-    s = ~~s / 100;
-    l = ~~l / 100;
-
-    if (s === 0) {
-      r = g = b = l; // achromatic
-    } else {
-      var q = l < 0.5 ?
-        l * (1 + s) :
-        l + s - l * s;
-      var p = 2 * l - q;
-      r = this._hueToRgb(p, q, h + 1/3);
-      g = this._hueToRgb(p, q, h);
-      b = this._hueToRgb(p, q, h - 1/3);
-    }
-
-    return [~~(r * 255), ~~(g * 255), ~~(b * 255)];
-  },
-
-  _hueToRgb: function(p, q, t) {
-    if (t < 0) t += 1;
-    if (t > 1) t -= 1;
-    if (t < 1/6) return p + (q - p) * 6 * t;
-    if (t < 1/2) return q;
-    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-    return p;
   }
 };

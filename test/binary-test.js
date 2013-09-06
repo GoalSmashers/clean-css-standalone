@@ -14,7 +14,7 @@ var binaryContext = function(options, context) {
 var fileBinaryContext = function(dataFile) {
   return {
     topic: function() {
-      exec("__DIRECT__=1 node ./clean-css.js -b -e ./test/data/" + dataFile, { maxBuffer: 1000 * 1024 }, this.callback);
+      exec("__DIRECT__=1 node ./clean-css.js -b -e -r ./test/data ./test/data/" + dataFile, { maxBuffer: 1000 * 1024 }, this.callback);
     },
     'should minimize': function(error, stdout) {
       var reference = fs.readFileSync('./test/data/' + dataFile.replace('.css', '-min.css'), 'utf-8');
@@ -49,7 +49,7 @@ exports.commandsSuite = vows.describe('binary commands').addBatch({
   }),
   'version': binaryContext('-v', {
     'should output help': function(error, stdout) {
-      assert.equal(stdout, "1.0.12\n");
+      assert.equal(stdout, "1.1.0\n");
     }
   }),
   'stdin': pipedContext("a{color: #f00}", '', {
@@ -83,8 +83,9 @@ exports.commandsSuite = vows.describe('binary commands').addBatch({
     }
   }),
   'no relative to path': binaryContext('./test/data/partials-absolute/base.css', {
-    'should not be able to resolve it fully': function(error, stdout) {
-      assert.equal(stdout, '.sub{padding:0}.base{margin:0}');
+    'should not be able to resolve it fully': function(error, stdout, stderr) {
+      assert.equal(stdout, '');
+      assert.notEqual(stderr, '');
     }
   }),
   'relative to path': binaryContext('-r ./test/data ./test/data/partials-absolute/base.css', {
