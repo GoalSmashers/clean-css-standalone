@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = "1.1.0";
+var version = "1.1.1";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -545,12 +545,6 @@ var UrlRewriter = {
     if (specialUrl)
       return url;
 
-    if (!options.absolute && !options.relative)
-      throw new Error('Relative url found: \'' + url + '\' but there is no way to resolve it (hint: use `root` or `output` options)');
-
-    if (!options.fromBase || !options.toBase)
-      return url;
-
     if (options.absolute) {
       rebased = path
         .resolve(path.join(options.fromBase, url))
@@ -573,11 +567,17 @@ var UrlRebase = {
       fromBase: options.relativeTo
     };
 
+    if (!rebaseOpts.absolute && !rebaseOpts.relative)
+      return data;
+
     if (rebaseOpts.absolute)
       rebaseOpts.toBase = path.resolve(options.root);
 
     if (rebaseOpts.relative)
       rebaseOpts.toBase = path.resolve(path.dirname(options.target));
+
+    if (!rebaseOpts.fromBase || !rebaseOpts.toBase)
+      return data;
 
     return UrlRewriter.process(data, rebaseOpts);
   }
