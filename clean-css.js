@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = "1.1.2";
+var version = "1.1.3";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -998,8 +998,8 @@ var CleanCSS = {
     // none to 0
     replace(/(border|border-top|border-right|border-bottom|border-left|outline):none/g, '$1:0');
 
-    // background:none to 0
-    replace(/(background):none([;}])/g, '$1:0$2');
+    // background:none to background:0 0
+    replace(/background:none([;}])/g, 'background:0 0$1');
 
     // multiple zeros into one
     replace(/box-shadow:0 0 0 0([^\.])/g, 'box-shadow:0 0$1');
