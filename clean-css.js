@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = "1.1.3";
+var version = "1.1.4";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -43,6 +43,8 @@ if (argv.has('--s0'))
   cleanOptions.keepSpecialComments = 0;
 if (argv.has('-s'))
   cleanOptions.processImport = false;
+if (argv.has('--skip-rebase'))
+  cleanOptions.noRebase = true;
 if (argv.has('-r'))
   cleanOptions.root = argv[argv.indexOf('-r') + 1]
 if (argv._ && !fromStdin) {
@@ -1025,7 +1027,7 @@ var CleanCSS = {
       data = urlsProcessor.restore(data);
     });
     replace(function rebaseUrls() {
-      data = UrlRebase.process(data, options);
+      data = options.noRebase ? data : UrlRebase.process(data, options);
     });
     replace(function restoreFreeText() {
       data = freeTextProcessor.restore(data);
