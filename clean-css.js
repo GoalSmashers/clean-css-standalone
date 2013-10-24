@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = "1.1.4";
+var version = "1.1.5";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -628,10 +628,12 @@ var CommentsProcessor = function Comments(keepSpecialComments, keepBreaks, lineB
           case '*':
             return comments.shift() + breakSuffix;
           case 1:
+          case '1':
             return comments.length == commentsCount ?
               comments.shift() + breakSuffix :
               '';
           case 0:
+          case '0':
             return '';
         }
       });
