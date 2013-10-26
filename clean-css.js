@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = "1.1.5";
+var version = "1.1.6";
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -899,7 +899,11 @@ var CleanCSS = {
     // strip parentheses in attribute values
     replace(/\[([^\]]+)\]/g, function(match, content) {
       var eqIndex = content.indexOf('=');
-      if (eqIndex < 0 && content.indexOf('\'') < 0 && content.indexOf('"') < 0)
+      var singleQuoteIndex = content.indexOf('\'');
+      var doubleQuoteIndex = content.indexOf('"');
+      if (eqIndex < 0 && singleQuoteIndex < 0 && doubleQuoteIndex < 0)
+        return match;
+      if (singleQuoteIndex === 0 || doubleQuoteIndex === 0)
         return match;
 
       var key = content.substring(0, eqIndex);
