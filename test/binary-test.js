@@ -6,7 +6,7 @@ var fs = require('fs');
 var binaryContext = function(options, context) {
   context.topic = function() {
     // We add __DIRECT__=1 to switch binary into 'non-piped' mode
-    exec("__DIRECT__=1 node ./clean-css.js " + options, this.callback);
+    exec('__DIRECT__=1 node ./clean-css.js ' + options, this.callback);
   };
   return context;
 };
@@ -14,10 +14,10 @@ var binaryContext = function(options, context) {
 var fileBinaryContext = function(dataFile) {
   return {
     topic: function() {
-      exec("__DIRECT__=1 node ./clean-css.js -b -e -r ./test/data ./test/data/" + dataFile, { maxBuffer: 1000 * 1024 }, this.callback);
+      exec('__DIRECT__=1 node ./clean-css.js -b -e -r ./test/data ./test/data/' + dataFile, { maxBuffer: 1000 * 1024 }, this.callback);
     },
     'should minimize': function(error, stdout) {
-      var reference = fs.readFileSync('./test/data/' + dataFile.replace('.css', '-min.css'), 'utf-8');
+      var reference = fs.readFileSync('./test/data/' + dataFile.replace('.css', '-min.css'), 'utf-8').trim();
       var splitReference = reference.split('\n');
       var splitOutput = stdout.split('\n');
       assert.equal(splitReference.length, splitOutput.length);
@@ -31,7 +31,7 @@ var fileBinaryContext = function(dataFile) {
 
 var pipedContext = function(css, options, context) {
   context.topic = function() {
-    exec("echo \"" + css + "\" | node ./clean-css.js " + options, this.callback);
+    exec('echo \'' + css + '\' | node ./clean-css.js ' + options, this.callback);
   };
   return context;
 };
@@ -49,37 +49,47 @@ exports.commandsSuite = vows.describe('binary commands').addBatch({
   }),
   'version': binaryContext('-v', {
     'should output help': function(error, stdout) {
-      assert.equal(stdout, "1.1.7\n");
+      assert.equal(stdout, '2.0.0\n');
     }
   }),
-  'stdin': pipedContext("a{color: #f00}", '', {
+  'stdin': pipedContext('a{color: #f00}', '', {
     'should output data': function(error, stdout) {
-      assert.equal(stdout, "a{color:red}");
+      assert.equal(stdout, 'a{color:red}');
     }
   }),
-  'no empty by default': pipedContext('a{}', '', {
+  'empty': pipedContext('a{}', '', {
     'should preserve content': function(error, stdout) {
-      assert.equal(stdout, "a{}");
+      assert.equal(stdout, '');
     }
   }),
-  'empty': pipedContext('a{}', '-e', {
+  'no advanced': pipedContext('a{color:red}p{color:red}', '--skip-advanced', {
     'should preserve content': function(error, stdout) {
-      assert.equal(stdout, "");
+      assert.equal(stdout, 'a{color:red}p{color:red}');
     }
   }),
-  'all special comments': pipedContext('/*!c1*/a{}/*!c2*//*c3*/', '', {
-    'should be kept': function(error, stdout) {
-      assert.equal(stdout, "/*!c1*/a{}/*!c2*/");
+  'selectors merge mode - *': pipedContext('p:nth-child(2n){color:red}a{color:red}', '', {
+    'should preserve content': function(error, stdout) {
+      assert.equal(stdout, 'a,p:nth-child(2n){color:red}');
     }
   }),
-  'one special comment': pipedContext('/*!c1*/a{}/*!c2*//*c3*/', '--s1', {
-    'should be kept': function(error, stdout) {
-      assert.equal(stdout, "/*!c1*/a{}");
+  'selectors merge mode - ie8': pipedContext('p:nth-child(2n){color:red}a{color:red}', '--selectors-merge-mode ie8', {
+    'should preserve content': function(error, stdout) {
+      assert.equal(stdout, 'p:nth-child(2n){color:red}a{color:red}');
     }
   }),
-  'no special comments': pipedContext('/*!c1*/a{}/*!c2*//*c3*/', '--s0', {
+  'all special comments': pipedContext('/*!c1*/a{color:red}/*!c2*//*c3*/', '', {
     'should be kept': function(error, stdout) {
-      assert.equal(stdout, "a{}");
+      assert.equal(stdout, '/*!c1*/a{color:red}/*!c2*/');
+    }
+  }),
+  'one special comment': pipedContext('/*!c1*/a{color:red}/*!c2*//*c3*/', '--s1', {
+    'should be kept': function(error, stdout) {
+      assert.equal(stdout, '/*!c1*/a{color:red}');
+    }
+  }),
+  'no special comments': pipedContext('/*!c1*/a{color:red}/*!c2*//*c3*/', '--s0', {
+    'should be kept': function(error, stdout) {
+      assert.equal(stdout, 'a{color:red}');
     }
   }),
   'no relative to path': binaryContext('./test/data/partials-absolute/base.css', {
