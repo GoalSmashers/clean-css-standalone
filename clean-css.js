@@ -47,6 +47,8 @@ if (argv.has('--skip-advanced'))
   cleanOptions.noAdvanced = true;
 if (argv.has('--selectors-merge-mode'))
   cleanOptions.selectorsMergeMode = argv[argv.indexOf('--selectors-merge-mode') + 1];
+if (argv.has('-d'))
+  cleanOptions.debug = true;
 if (argv.has('-r'))
   cleanOptions.root = argv[argv.indexOf('-r') + 1]
 if (argv._ && !fromStdin) {
@@ -66,7 +68,8 @@ if (argv.has('-h') || argv.has('--help') || (!fromStdin && !argv._)) {
   util.puts('  -b\t\t\t\t\tKeep line breaks');
   util.puts('  --s0\t\t\t\t\tRemove all special comments (i.e. /*! special comment */)');
   util.puts('  --s1\t\t\t\t\tRemove all special comments but the first one');
-  util.puts('  --skip-import\t\t\t\tDisable the @import processing');
+  util.puts('  -s\t\t\t\t\tDisable the @import processing');
+  util.puts('  --skip-rebase\t\t\tDisable advanced processing');  
   util.puts('  --skip-advanced\t\t\tDisable advanced processing');
   util.puts('  --selectors-merge-mode [ie8|*]\tEither IE8 compatible or ful selectors merging');
   util.puts('  -r\t\t\t\t\tSet a root path to which resolve absolute @import rules');
