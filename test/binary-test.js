@@ -49,7 +49,7 @@ exports.commandsSuite = vows.describe('binary commands').addBatch({
   }),
   'version': binaryContext('-v', {
     'should output help': function(error, stdout) {
-      assert.equal(stdout, '2.0.0\n');
+      assert.equal(stdout, '2.0.1\n');
     }
   }),
   'stdin': pipedContext('a{color: #f00}', '', {

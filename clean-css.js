@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = '2.0.0';
+var version = '2.0.1';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -69,7 +69,7 @@ if (argv.has('-h') || argv.has('--help') || (!fromStdin && !argv._)) {
   util.puts('  --s0\t\t\t\t\tRemove all special comments (i.e. /*! special comment */)');
   util.puts('  --s1\t\t\t\t\tRemove all special comments but the first one');
   util.puts('  -s\t\t\t\t\tDisable the @import processing');
-  util.puts('  --skip-rebase\t\t\tDisable advanced processing');  
+  util.puts('  --skip-rebase\t\t\tDisable advanced processing');
   util.puts('  --skip-advanced\t\t\tDisable advanced processing');
   util.puts('  --selectors-merge-mode [ie8|*]\tEither IE8 compatible or ful selectors merging');
   util.puts('  -r\t\t\t\t\tSet a root path to which resolve absolute @import rules');
@@ -1061,7 +1061,7 @@ function SelectorsOptimizer(data, options) {
       var currentMatch = matchPositions.length - 1;
 
       while (currentMatch >= 0) {
-        if (bodies[currentMatch].indexOf(optimizedTokens[k]) > - 1) {
+        if (bodies[currentMatch].indexOf(optimizedTokens[k]) > -1 && k > -1) {
           k -= 1;
           continue;
         }
