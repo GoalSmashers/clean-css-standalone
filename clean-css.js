@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = '2.0.1';
+var version = '2.0.2';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -931,7 +931,7 @@ function EmptyRemoval(data) {
   };
 };
 
-function SelectorsOptimizer(data, options) {
+function SelectorsOptimizer(data, context, options) {
   var specialSelectors = {
     '*': /\-(moz|ms|o|webkit)\-/,
     'ie8': /(\-moz\-|\-ms\-|\-o\-|\-webkit\-|:not|:target|:visited|:empty|:first\-of|:last|:nth|:only|:root)/
@@ -1143,14 +1143,14 @@ function SelectorsOptimizer(data, options) {
 
   return {
     process: function() {
-      var tokenized = new Tokenizer(data).process();
+      var tokenized = new Tokenizer(data, context).process();
       optimize(tokenized);
       return rebuild(tokenized);
     }
   };
 };
 
-function Tokenizer(data) {
+function Tokenizer(data, minifyContext) {
   var whatsNext = function(context) {
     var cursor = context.cursor;
     var mode = context.mode;
@@ -1248,8 +1248,14 @@ function Tokenizer(data) {
         tokenized.push({ selector: selector, body: body });
       } else if (what == 'bodyEnd') {
         // extra closing brace at the top level can be safely ignored
-        if (context.mode == 'top' && data[context.cursor] == '}') {
-          context.cursor += 1;
+        if (context.mode == 'top') {
+          var at = context.cursor;
+          var warning = data[context.cursor] == '}' ?
+            'Unexpected \'}\' in \'' + data.substring(at - 20, at + 20) + '\'. Ignoring.' :
+            'Unexpected content: \'' + data.substring(at, nextSpecial + 1) + '\'. Ignoring.';
+
+          minifyContext.warnings.push(warning);
+          context.cursor = nextSpecial + 1;
           continue;
         }
 
@@ -1783,7 +1789,7 @@ function CleanCSS(options) {
 
     if (!options.noAdvanced) {
       replace(function optimizeSelectors() {
-        data = new SelectorsOptimizer(data, {
+        data = new SelectorsOptimizer(data, context, {
           keepBreaks: options.keepBreaks,
           lineBreak: lineBreak,
           selectorsMergeMode: options.selectorsMergeMode
