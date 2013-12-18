@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = '2.0.2';
+var version = '2.0.3';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -528,6 +528,10 @@ function ImportInliner(context) {
       // return if we know there are no more comments
       if (noComments)
         return false;
+
+      // idx can be still within last matched comment (many @import statements inside one comment)
+      if (idx < lastEndIndex)
+        return true;
 
       comment = data.match(commentRegex);
 
@@ -1636,8 +1640,8 @@ function CleanCSS(options) {
     });
 
     // strip parentheses in animation & font names
-    replace(/(animation|animation\-name|font|font\-family):([^;}]+)/g, function(match, propertyName, fontDef) {
-      return propertyName + ':' + fontDef.replace(/['"]([\w\-]+)['"]/g, '$1');
+    replace(/(animation|animation\-name|font|font\-family):([^;}]+)/g, function(match, propertyName, def) {
+      return propertyName + ':' + def.replace(/['"]([a-zA-Z][a-zA-Z\d\-_]+)['"]/g, '$1');
     });
 
     // strip parentheses in @keyframes
