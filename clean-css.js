@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = '2.0.3';
+var version = '2.0.4';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -139,8 +139,22 @@ function ColorHSLToHex(data) {
   var hslToRgb = function(h, s, l) {
     var r, g, b;
 
+    // normalize hue orientation b/w 0 and 360 degrees
+    h = h % 360;
+    if (h < 0)
+      h += 360;
     h = ~~h / 360;
+
+    if (s < 0)
+      s = 0;
+    else if (s > 100)
+      s = 100;
     s = ~~s / 100;
+
+    if (l < 0)
+      l = 0;
+    else if (l > 100)
+      l = 100;
     l = ~~l / 100;
 
     if (s === 0) {
@@ -169,7 +183,7 @@ function ColorHSLToHex(data) {
 
   return {
     process: function() {
-      return data.replace(/hsl\((\d+),(\d+)%?,(\d+)%?\)/g, function(match, hue, saturation, lightness) {
+      return data.replace(/hsl\((-?\d+),(-?\d+)%?,(-?\d+)%?\)/g, function(match, hue, saturation, lightness) {
         var asRgb = hslToRgb(hue, saturation, lightness);
         var redAsHex = asRgb[0].toString(16);
         var greenAsHex = asRgb[1].toString(16);
