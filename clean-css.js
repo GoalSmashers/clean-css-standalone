@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = '2.0.4';
+var version = '2.0.5';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -1588,6 +1588,9 @@ function CleanCSS(options) {
     options.processImport = true;
 
   var minify = function(data) {
+    if (Buffer.isBuffer(data))
+      data = data.toString();
+
     var startedAt;
     if (options.debug) {
       startedAt = process.hrtime();
@@ -1805,7 +1808,10 @@ function CleanCSS(options) {
       return match.replace(/\+/g, ' + ');
     });
 
-    if (!options.noAdvanced) {
+    if (options.noAdvanced) {
+      if (options.keepBreaks)
+        replace(/\}/g, '}' + lineBreak);
+    } else {
       replace(function optimizeSelectors() {
         data = new SelectorsOptimizer(data, context, {
           keepBreaks: options.keepBreaks,
