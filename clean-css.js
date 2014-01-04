@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = '2.0.5';
+var version = '2.0.6';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -513,8 +513,11 @@ function ImportInliner(context) {
       }
 
       nextEnd = data.indexOf(';', nextStart);
-      if (nextEnd == -1)
+      if (nextEnd == -1) {
+        tempData.push('');
+        cursor = data.length;
         break;
+      }
 
       tempData.push(data.substring(cursor, nextStart));
       tempData.push(inlinedFile(data, nextStart, nextEnd, options));
@@ -528,6 +531,7 @@ function ImportInliner(context) {
 
   var commentScanner = function(data) {
     var commentRegex = /(\/\*(?!\*\/)[\s\S]*?\*\/)/;
+    var lastStartIndex = 0;
     var lastEndIndex = 0;
     var noComments = false;
 
@@ -544,7 +548,7 @@ function ImportInliner(context) {
         return false;
 
       // idx can be still within last matched comment (many @import statements inside one comment)
-      if (idx < lastEndIndex)
+      if (idx > lastStartIndex && idx < lastEndIndex)
         return true;
 
       comment = data.match(commentRegex);
@@ -555,7 +559,7 @@ function ImportInliner(context) {
       }
 
       // get the indexes relative to the current data chunk
-      localStartIndex = comment.index;
+      lastStartIndex = localStartIndex = comment.index;
       localEndIndex = localStartIndex + comment[0].length;
 
       // calculate the indexes relative to the full original data
