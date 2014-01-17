@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = '2.0.6';
+var version = '2.0.7';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -1173,6 +1173,8 @@ function SelectorsOptimizer(data, context, options) {
 };
 
 function Tokenizer(data, minifyContext) {
+  var flatBlock = /^@(font\-face|page|\-ms\-viewport|\-o\-viewport|viewport)/;
+
   var whatsNext = function(context) {
     var cursor = context.cursor;
     var mode = context.mode;
@@ -1243,7 +1245,7 @@ function Tokenizer(data, minifyContext) {
           nextEnd = data.indexOf('{', nextSpecial + 1);
           var block = data.substring(context.cursor, nextEnd).trim();
 
-          var isFlat = fragment.indexOf('@font-face') === 0;
+          var isFlat = flatBlock.test(block);
           oldMode = context.mode;
           context.cursor = nextEnd + 1;
           context.mode = isFlat ? 'body' : 'block';
