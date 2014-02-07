@@ -10,7 +10,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = '2.0.7';
+var version = '2.0.8';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -1051,7 +1051,7 @@ function SelectorsOptimizer(data, context, options) {
 
       selectors = selector.split(',');
       if (selectors.length > 1)
-        selectors.unshift(selector);
+        selectors.push(selector);
 
       for (var j = 0, m = selectors.length; j < m; j++) {
         var sel = selectors[j];
