@@ -3,14 +3,17 @@
 var util = require('util');
 var fs = require('fs');
 var path = require('path');
+var http = require('http');
+var https = require('https');
+var url = require('url');
 
 var options = {
   source: null,
   target: null
 };
 var cleanOptions = {};
-var fromStdin = !process.env['__DIRECT__'] && !process.stdin.isTTY;
-var version = '2.0.8';
+var fromStdin = !process.env.__DIRECT__ && !process.stdin.isTTY;
+var version = '2.1.0';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -45,8 +48,15 @@ if (argv.has('--skip-rebase'))
   cleanOptions.noRebase = true;
 if (argv.has('--skip-advanced'))
   cleanOptions.noAdvanced = true;
-if (argv.has('--selectors-merge-mode'))
-  cleanOptions.selectorsMergeMode = argv[argv.indexOf('--selectors-merge-mode') + 1];
+if (argv.has('--compatibility'))
+  cleanOptions.compatibility = argv[argv.indexOf('--compatibility') + 1];
+if (argv.has('--selectors-merge-mode')) {
+  cleanOptions.compatibility = argv[argv.indexOf('--selectors-merge-mode') + 1];
+  console.warn('--selectors-merge-mode is deprecated and will be removed in clean-css 2.2. Please use --compatibility %s switch instead.', cleanOptions.compatibility);
+}
+if (argv.has('--timeout'))
+  cleanOptions.timeout = { timeout: parseFloat(argv[argv.indexOf('--timeout') + 1]) * 1000 };
+
 if (argv.has('-d'))
   cleanOptions.debug = true;
 if (argv.has('-r'))
@@ -69,9 +79,11 @@ if (argv.has('-h') || argv.has('--help') || (!fromStdin && !argv._)) {
   util.puts('  --s0\t\t\t\t\tRemove all special comments (i.e. /*! special comment */)');
   util.puts('  --s1\t\t\t\t\tRemove all special comments but the first one');
   util.puts('  -s\t\t\t\t\tDisable the @import processing');
-  util.puts('  --skip-rebase\t\t\tDisable advanced processing');
+  util.puts('  --skip-rebase\t\t\t\tDisable advanced processing');
   util.puts('  --skip-advanced\t\t\tDisable advanced processing');
-  util.puts('  --selectors-merge-mode [ie8|*]\tEither IE8 compatible or ful selectors merging');
+  util.puts('  --selectors-merge-mode [ie8|*]\tDEPRECATED: Use --compatibility switch');
+  util.puts('  --compatibility [ie7|ie8|*]\t\tForce compatibility mode');
+  util.puts('  --timeout [seconds]\t\t\tPer connection timeout when fetching remote @imports (defaults to 5 seconds)');
   util.puts('  -r\t\t\t\t\tSet a root path to which resolve absolute @import rules');
   util.puts('  -d\t\t\t\t\tShow debug information (minification time & compression efficiency)');
   process.exit(0);
@@ -82,7 +94,9 @@ if (options.source) {
   fs.readFile(options.source, 'utf8', function(error, data) {
     if (error)
       throw error;
-    output(minify(data));
+    optimize(data, function(errors, minified) {
+      output(minified);
+    });
   });
 } else {
   var stdin = process.openStdin();
@@ -92,28 +106,30 @@ if (options.source) {
     data += chunk;
   });
   stdin.on('end', function() {
-    output(minify(data));
+    optimize(data, function(errors, minified) {
+      output(minified);
+    });
   });
 }
 
-function minify(data) {
+function optimize(data, callback) {
   var minifier = new CleanCSS(cleanOptions);
-  var minified = minifier.minify(data);
+  minifier.minify(data, function(errors, minified) {
+    if (cleanOptions.debug) {
+      console.error('Original: %d bytes', minifier.stats.originalSize);
+      console.error('Minified: %d bytes', minifier.stats.minifiedSize);
+      console.error('Efficiency: %d%', ~~(minifier.stats.efficiency * 10000) / 100.0);
+      console.error('Time spent: %dms', minifier.stats.timeSpent);
+    }
 
-  if (cleanOptions.debug) {
-    console.error('Original: %d bytes', minifier.stats.originalSize);
-    console.error('Minified: %d bytes', minifier.stats.minifiedSize);
-    console.error('Efficiency: %d%', ~~(minifier.stats.efficiency * 10000) / 100.0);
-    console.error('Time spent: %dms', minifier.stats.timeSpent);
-  }
+    outputFeedback(minifier.errors, true);
+    outputFeedback(minifier.warnings);
 
-  outputFeedback(minifier.errors, true);
-  outputFeedback(minifier.warnings);
+    if (minifier.errors.length > 0)
+      process.exit(1);
 
-  if (minifier.errors.length > 0)
-    process.exit(1);
-
-  return minified;
+    callback(errors, minified);
+  });
 }
 
 function output(minified) {
@@ -214,15 +230,13 @@ function ColorLongToShortHex(data) {
 function ColorRGBToHex(data) {
   return {
     process: function() {
-      return data.replace(/rgb\((\d+),(\d+),(\d+)\)/g, function(match, red, green, blue) {
-        var redAsHex = parseInt(red, 10).toString(16);
-        var greenAsHex = parseInt(green, 10).toString(16);
-        var blueAsHex = parseInt(blue, 10).toString(16);
+      return data.replace(/rgb\((\-?\d+),(\-?\d+),(\-?\d+)\)/g, function(match, red, green, blue) {
+        red = Math.max(0, Math.min(~~red, 255));
+        green = Math.max(0, Math.min(~~green, 255));
+        blue = Math.max(0, Math.min(~~blue, 255));
 
-        return '#' +
-          ((redAsHex.length == 1 ? '0' : '') + redAsHex) +
-          ((greenAsHex.length == 1 ? '0' : '') + greenAsHex) +
-          ((blueAsHex.length == 1 ? '0' : '') + blueAsHex);
+        // Credit: Asen  http://jsbin.com/UPUmaGOc/2/edit?js,console
+        return '#' + ('00000' + (red << 16 | green << 8 | blue).toString(16)).slice(-6);
       });
     }
   };
@@ -431,9 +445,7 @@ function UrlRebase(options, context) {
     return UrlRewriter.process(data, rebaseOpts);
   };
 
-  return {
-    process: process
-  };
+  return { process: process };
 };
 
 var UrlRewriter = {
@@ -443,7 +455,7 @@ var UrlRewriter = {
     var nextEnd = 0;
     var cursor = 0;
 
-    for (; nextEnd < data.length; ) {
+    for (; nextEnd < data.length;) {
       nextStart = data.indexOf('url(', nextEnd);
       if (nextStart == -1)
         break;
@@ -463,23 +475,26 @@ var UrlRewriter = {
       data;
   },
 
-  _rebased: function(url, options) {
-    var specialUrl = url[0] == '/' ||
-      url.substring(url.length - 4) == '.css' ||
-      url.indexOf('data:') === 0 ||
-      /^https?:\/\//.exec(url) !== null ||
-      /__\w+__/.exec(url) !== null;
+  _rebased: function(resource, options) {
+    var specialUrl = resource[0] == '/' ||
+      resource.substring(resource.length - 4) == '.css' ||
+      resource.indexOf('data:') === 0 ||
+      /^https?:\/\//.exec(resource) !== null ||
+      /__\w+__/.exec(resource) !== null;
     var rebased;
 
     if (specialUrl)
-      return url;
+      return resource;
+
+    if (/https?:\/\//.test(options.toBase))
+      return url.resolve(options.toBase, resource);
 
     if (options.absolute) {
       rebased = path
-        .resolve(path.join(options.fromBase, url))
+        .resolve(path.join(options.fromBase, resource))
         .replace(options.toBase, '');
     } else {
-      rebased = path.relative(options.toBase, path.join(options.fromBase, url));
+      rebased = path.relative(options.toBase, path.join(options.fromBase, resource));
     }
 
     return process.platform == 'win32' ?
@@ -490,19 +505,41 @@ var UrlRewriter = {
 
 // lib/imports/*
 
+var merge = function(source1, source2) {
+  var target = {};
+  for (var key1 in source1)
+    target[key1] = source1[key1];
+  for (var key2 in source2)
+    target[key2] = source2[key2];
+
+  return target;
+};
+
 function ImportInliner(context) {
+  var defaultOptions = {
+    timeout: 5000,
+    request: {}
+  };
+  var inlinerOptions = merge(defaultOptions, options || {});
+
   var process = function(data, options) {
-    var tempData = [];
+    options._shared = options._shared || {
+      done: [],
+      left: []
+    };
+    var shared = options._shared;
+
     var nextStart = 0;
     var nextEnd = 0;
     var cursor = 0;
     var isComment = commentScanner(data);
+    var afterContent = contentScanner(data);
 
     options.relativeTo = options.relativeTo || options.root;
     options._baseRelativeTo = options._baseRelativeTo || options.relativeTo;
     options.visited = options.visited || [];
 
-    for (; nextEnd < data.length; ) {
+    for (; nextEnd < data.length;) {
       nextStart = data.indexOf('@import', cursor);
       if (nextStart == -1)
         break;
@@ -514,19 +551,29 @@ function ImportInliner(context) {
 
       nextEnd = data.indexOf(';', nextStart);
       if (nextEnd == -1) {
-        tempData.push('');
         cursor = data.length;
+        data = '';
         break;
       }
 
-      tempData.push(data.substring(cursor, nextStart));
-      tempData.push(inlinedFile(data, nextStart, nextEnd, options));
-      cursor = nextEnd + 1;
+      shared.done.push(data.substring(cursor, nextStart));
+      shared.left.unshift([data.substring(nextEnd + 1), options]);
+
+      return afterContent(nextStart) ?
+        processNext(options) :
+        inline(data, nextStart, nextEnd, options);
     }
 
-    return tempData.length > 0 ?
-      tempData.join('') + data.substring(cursor, data.length) :
-      data;
+    // no @import matched in current data
+    shared.done.push(data);
+    return processNext(options);
+  };
+
+  var processNext = function(options) {
+    if (options._shared.left.length > 0)
+      return process.apply(null, options._shared.left.shift());
+    else
+      return options.whenDone(options._shared.done.join(''));
   };
 
   var commentScanner = function(data) {
@@ -580,23 +627,134 @@ function ImportInliner(context) {
     return scanner;
   };
 
-  var inlinedFile = function(data, nextStart, nextEnd, options) {
-    var strippedImport = data
-      .substring(data.indexOf(' ', nextStart) + 1, nextEnd)
-      .replace(/^url\(/, '')
-      .replace(/['"]/g, '');
+  var contentScanner = function(data) {
+    var isComment = commentScanner(data);
+    var firstContentIdx = -1;
+    while (true) {
+      firstContentIdx = data.indexOf('{', firstContentIdx + 1);
+      if (firstContentIdx == -1 || !isComment(firstContentIdx))
+        break;
+    }
 
-    var separatorIndex = strippedImport.indexOf(' ');
-    var importedFile = strippedImport
-      .substring(0, separatorIndex > 0 ? separatorIndex : strippedImport.length)
-      .replace(')', '');
-    var mediaQuery = strippedImport
-      .substring(importedFile.length + 1)
+    return function(idx) {
+      return firstContentIdx > -1 ?
+        idx > firstContentIdx :
+        false;
+    };
+  };
+
+  var inline = function(data, nextStart, nextEnd, options) {
+    var importDeclaration = data
+      .substring(data.indexOf(' ', nextStart) + 1, nextEnd)
       .trim();
 
-    if (/^(http|https):\/\//.test(importedFile) || /^\/\//.test(importedFile))
-      return '@import url(' + importedFile + ')' + (mediaQuery.length > 0 ? ' ' + mediaQuery : '') + ';';
+    var viaUrl = importDeclaration.indexOf('url(') === 0;
+    var urlStartsAt = viaUrl ? 4 : 0;
+    var isQuoted = /^['"]/.exec(importDeclaration.substring(urlStartsAt, urlStartsAt + 2));
+    var urlEndsAt = isQuoted ?
+      importDeclaration.indexOf(isQuoted[0], urlStartsAt + 1) :
+      importDeclaration.split(' ')[0].length;
 
+    var importedFile = importDeclaration
+      .substring(urlStartsAt, urlEndsAt)
+      .replace(/['"]/g, '')
+      .replace(/\)$/, '')
+      .trim();
+
+    var mediaQuery = importDeclaration
+      .substring(urlEndsAt + 1)
+      .replace(/^\)/, '')
+      .trim();
+
+    var isRemote = options.isRemote ||
+      /^(http|https):\/\//.test(importedFile) ||
+      /^\/\//.test(importedFile);
+
+    if (options.localOnly && isRemote) {
+      context.warnings.push('Ignoring remote @import declaration of "' + importedFile + '" as no callback given.');
+      restoreImport(importedFile, mediaQuery, options);
+
+      return processNext(options);
+    }
+
+    var method = isRemote ? inlineRemoteResource : inlineLocalResource;
+    return method(importedFile, mediaQuery, options);
+  };
+
+  var inlineRemoteResource = function(importedFile, mediaQuery, options) {
+    var importedUrl = /^https?:\/\//.test(importedFile) ?
+      importedFile :
+      url.resolve(options.relativeTo, importedFile);
+
+    if (importedUrl.indexOf('//') === 0)
+      importedUrl = 'http:' + importedUrl;
+
+    if (options.visited.indexOf(importedUrl) > -1)
+      return processNext(options);
+
+
+    if (context.debug)
+      console.error('Inlining remote stylesheet: ' + importedUrl);
+
+    options.visited.push(importedUrl);
+
+    var get = importedUrl.indexOf('http://') === 0 ?
+      http.get :
+      https.get;
+
+    var timedOut = false;
+    var handleError = function(message) {
+      context.errors.push('Broken @import declaration of "' + importedUrl + '" - ' + message);
+      restoreImport(importedUrl, mediaQuery, options);
+
+      processNext(options);
+    };
+    var requestOptions = merge(url.parse(importedUrl), inlinerOptions.request);
+
+    get(requestOptions, function(res) {
+      if (res.statusCode < 200 || res.statusCode > 399) {
+        return handleError('error ' + res.statusCode);
+      } else if (res.statusCode > 299) {
+        var movedUrl = url.resolve(importedUrl, res.headers.location);
+        return inlineRemoteResource(movedUrl, mediaQuery, options);
+      }
+
+      var chunks = [];
+      var parsedUrl = url.parse(importedUrl);
+      res.on('data', function(chunk) {
+        chunks.push(chunk.toString());
+      });
+      res.on('end', function() {
+        var importedData = chunks.join('');
+        importedData = UrlRewriter.process(importedData, { toBase: importedUrl });
+
+        if (mediaQuery.length > 0)
+          importedData = '@media ' + mediaQuery + '{' + importedData + '}';
+
+        process(importedData, {
+          isRemote: true,
+          relativeTo: parsedUrl.protocol + '//' + parsedUrl.host,
+          _shared: options._shared,
+          whenDone: options.whenDone,
+          visited: options.visited
+        });
+      });
+    })
+    .on('error', function(res) {
+      handleError(res.message);
+    })
+    .on('timeout', function() {
+      // FIX: node 0.8 fires this event twice
+      if (timedOut)
+        return;
+
+      handleError('timeout');
+      timedOut = true;
+    })
+    .setTimeout(inlinerOptions.timeout);
+  };
+
+  var inlineLocalResource = function(importedFile, mediaQuery, options) {
     var relativeTo = importedFile[0] == '/' ?
       options.root :
       options.relativeTo;
@@ -605,11 +763,15 @@ function ImportInliner(context) {
 
     if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
       context.errors.push('Broken @import declaration of "' + importedFile + '"');
-      return '';
+      return processNext(options);
     }
 
-    if (options.visited.indexOf(fullPath) != -1)
-      return '';
+    if (options.visited.indexOf(fullPath) > -1)
+      return processNext(options);
+
+
+    if (context.debug)
+      console.error('Inlining local stylesheet: ' + fullPath);
 
     options.visited.push(fullPath);
 
@@ -621,21 +783,27 @@ function ImportInliner(context) {
       toBase: options._baseRelativeTo
     });
 
-    var inlinedData = process(importedData, {
+    if (mediaQuery.length > 0)
+      importedData = '@media ' + mediaQuery + '{' + importedData + '}';
+
+    return process(importedData, {
       root: options.root,
       relativeTo: importRelativeTo,
-      _baseRelativeTo: options.baseRelativeTo,
-      visited: options.visited
+      _baseRelativeTo: options._baseRelativeTo,
+      _shared: options._shared,
+      visited: options.visited,
+      whenDone: options.whenDone,
+      localOnly: options.localOnly
     });
-    return mediaQuery.length > 0 ?
-      '@media ' + mediaQuery + '{' + inlinedData + '}' :
-      inlinedData;
   };
 
-  return {
-    // Inlines all imports taking care of repetitions, unknown files, and circular dependencies
-    process: process
+  var restoreImport = function(importedUrl, mediaQuery, options) {
+    var restoredImport = '@import url(' + importedUrl + ')' + (mediaQuery.length > 0 ? ' ' + mediaQuery : '') + ';';
+    options._shared.done.push(restoredImport);
   };
+
+  // Inlines all imports taking care of repetitions, unknown files, and circular dependencies
+  return { process: process };
 };
 
 // lib/properties/*
@@ -755,6 +923,9 @@ function PropertyOptimizer() {
     var tokens = body.split(';');
     var keyValues = [];
 
+    if (tokens.length < 2)
+      return;
+
     for (var i = 0, l = tokens.length; i < l; i++) {
       var token = tokens[i];
       if (token === '')
@@ -860,7 +1031,7 @@ function PropertyOptimizer() {
   return {
     process: function(body, allowAdjacent) {
       var tokens = tokenize(body);
-      if (tokens.length < 2)
+      if (!tokens)
         return body;
 
       var optimized = optimize(tokens, allowAdjacent);
@@ -928,7 +1099,7 @@ function EmptyRemoval(data) {
     var nextEmpty = 0;
     var cursor = 0;
 
-    for (; nextEmpty < cssData.length; ) {
+    for (; nextEmpty < cssData.length;) {
       nextEmpty = cssData.indexOf('{}', cursor);
       if (nextEmpty == -1)
         break;
@@ -956,8 +1127,11 @@ function EmptyRemoval(data) {
 function SelectorsOptimizer(data, context, options) {
   var specialSelectors = {
     '*': /\-(moz|ms|o|webkit)\-/,
-    'ie8': /(\-moz\-|\-ms\-|\-o\-|\-webkit\-|:not|:target|:visited|:empty|:first\-of|:last|:nth|:only|:root)/
+    'ie8': /(\-moz\-|\-ms\-|\-o\-|\-webkit\-|:root|:nth|:first\-of|:last|:only|:empty|:target|:checked|::selection|:enabled|:disabled|:not)/,
+    'ie7': /(\-moz\-|\-ms\-|\-o\-|\-webkit\-|:focus|:before|:after|:root|:nth|:first\-of|:last|:only|:empty|:target|:checked|::selection|:enabled|:disabled|:not)/
   };
+
+  var minificationsMade = [];
 
   var propertyOptimizer = new PropertyOptimizer();
 
@@ -984,26 +1158,30 @@ function SelectorsOptimizer(data, context, options) {
     var forRemoval = [];
 
     for (var i = 0, l = tokens.length; i < l; i++) {
-      if (typeof(tokens[i]) == 'string' || tokens[i].block)
+      var token = tokens[i];
+      if (typeof token == 'string' || token.block)
         continue;
 
-      var selector = tokens[i].selector;
-      var body = tokens[i].body;
-      var id = body + '@' + selector;
+      var id = token.body + '@' + token.selector;
       var alreadyMatched = matched[id];
 
       if (alreadyMatched) {
-        forRemoval.push(alreadyMatched[alreadyMatched.length - 1]);
-        alreadyMatched.push(i);
+        forRemoval.push(alreadyMatched[0]);
+        alreadyMatched.unshift(i);
       } else {
         matched[id] = [i];
       }
     }
 
-    forRemoval = forRemoval.sort(function(a, b) { return a > b ? 1 : -1; });
+    forRemoval = forRemoval.sort(function(a, b) {
+      return a > b ? 1 : -1;
+    });
+
     for (var j = 0, n = forRemoval.length; j < n; j++) {
       tokens.splice(forRemoval[j] - j, 1);
     }
+
+    minificationsMade.unshift(forRemoval.length > 0);
   };
 
   var mergeAdjacent = function(tokens) {
@@ -1013,7 +1191,7 @@ function SelectorsOptimizer(data, context, options) {
     for (var i = 0, l = tokens.length; i < l; i++) {
       var token = tokens[i];
 
-      if (typeof(token) == 'string' || token.block)
+      if (typeof token == 'string' || token.block)
         continue;
 
       if (token.selector == lastToken.selector) {
@@ -1031,27 +1209,27 @@ function SelectorsOptimizer(data, context, options) {
     for (var j = 0, m = forRemoval.length; j < m; j++) {
       tokens.splice(forRemoval[j] - j, 1);
     }
+
+    minificationsMade.unshift(forRemoval.length > 0);
   };
 
   var reduceNonAdjacent = function(tokens) {
     var matched = {};
     var matchedMoreThanOnce = [];
     var partiallyReduced = [];
+    var reduced = false;
     var token, selector, selectors;
-    var removeEmpty = function(value) {
-      return value.length > 0 ? value : '';
-    };
 
     for (var i = 0, l = tokens.length; i < l; i++) {
       token = tokens[i];
       selector = token.selector;
 
-      if (typeof(token) == 'string' || token.block)
+      if (typeof token == 'string' || token.block)
         continue;
 
-      selectors = selector.split(',');
-      if (selectors.length > 1)
-        selectors.push(selector);
+      selectors = selector.indexOf(',') > 0 ?
+        selector.split(',').concat(selector) :
+        [selector];
 
       for (var j = 0, m = selectors.length; j < m; j++) {
         var sel = selectors[j];
@@ -1070,7 +1248,9 @@ function SelectorsOptimizer(data, context, options) {
       var matchPositions = matched[selector];
       var bodies = [];
       var joinsAt = [];
-      for (var j = 0, m = matchPositions.length; j < m; j++) {
+      var j;
+
+      for (j = 0, m = matchPositions.length; j < m; j++) {
         var body = tokens[matchPositions[j]].body;
         bodies.push(body);
         joinsAt.push((joinsAt[j - 1] || 0) + body.split(';').length);
@@ -1079,27 +1259,31 @@ function SelectorsOptimizer(data, context, options) {
       var optimizedBody = propertyOptimizer.process(bodies.join(';'), joinsAt);
       var optimizedTokens = optimizedBody.split(';');
 
-      var k = optimizedTokens.length - 1;
+      j = optimizedTokens.length - 1;
       var currentMatch = matchPositions.length - 1;
 
       while (currentMatch >= 0) {
-        if (bodies[currentMatch].indexOf(optimizedTokens[k]) > -1 && k > -1) {
-          k -= 1;
+        if (bodies[currentMatch].indexOf(optimizedTokens[j]) > -1 && j > -1) {
+          j -= 1;
           continue;
         }
 
         var tokenIndex = matchPositions[currentMatch];
         var token = tokens[tokenIndex];
-        var reducedBody = optimizedTokens
-          .splice(k + 1)
-          .filter(removeEmpty)
-          .join(';');
+        var newBody = optimizedTokens.splice(j + 1);
+        var reducedBody = [];
+        for (var k = 0, n = newBody.length; k < n; k++) {
+          if (newBody[k].length > 0)
+            reducedBody.push(newBody[k]);
+        }
 
         if (token.selector == selector) {
-          token.body = reducedBody;
+          var joinedBody = reducedBody.join(';');
+          reduced = reduced || (token.body != joinedBody);
+          token.body = joinedBody;
         } else {
           token._partials = token._partials || [];
-          token._partials.push(reducedBody);
+          token._partials.push(reducedBody.join(';'));
 
           if (partiallyReduced.indexOf(tokenIndex) == -1)
             partiallyReduced.push(tokenIndex);
@@ -1114,25 +1298,34 @@ function SelectorsOptimizer(data, context, options) {
     // if all selectors were reduced to same value we can override it
     for (i = 0, l = partiallyReduced.length; i < l; i++) {
       token = tokens[partiallyReduced[i]];
-      selectors = token.selector.split(',');
 
-      if (token._partials.length == selectors.length && token.body != token._partials[0]) {
+      if (token.body != token._partials[0] && token._partials.length == token.selector.split(',').length) {
         var newBody = token._partials[0];
         for (var k = 1, n = token._partials.length; k < n; k++) {
           if (token._partials[k] != newBody)
             break;
         }
 
-        if (k == n)
+        if (k == n) {
           token.body = newBody;
+          reduced = reduced || true;
+        }
       }
 
       delete token._partials;
     }
+
+    minificationsMade.unshift(reduced);
   };
 
   var optimize = function(tokens) {
-    tokens = (Array.isArray(tokens) ? tokens : [tokens]);
+    var noChanges = function() {
+      return minificationsMade.length > 4 &&
+        minificationsMade[0] === false &&
+        minificationsMade[1] === false;
+    };
+
+    tokens = Array.isArray(tokens) ? tokens : [tokens];
     for (var i = 0, l = tokens.length; i < l; i++) {
       var token = tokens[i];
 
@@ -1144,23 +1337,43 @@ function SelectorsOptimizer(data, context, options) {
       }
     }
 
-    removeDuplicates(tokens);
-    mergeAdjacent(tokens);
-    reduceNonAdjacent(tokens);
+    // Run until 2 last operations do not yield any changes
+    minificationsMade = [];
+    while (true) {
+      if (noChanges())
+        break;
+      removeDuplicates(tokens);
+
+      if (noChanges())
+        break;
+      mergeAdjacent(tokens);
+
+      if (noChanges())
+        break;
+      reduceNonAdjacent(tokens);
+    }
   };
 
   var rebuild = function(tokens) {
-    return (Array.isArray(tokens) ? tokens : [tokens])
-      .map(function(token) {
-        if (typeof token == 'string')
-          return token;
+    var rebuilt = [];
 
-        if (token.block)
-          return token.block + '{' + rebuild(token.body) + '}';
-        else
-          return token.selector + '{' + token.body + '}';
-      })
-      .join(options.keepBreaks ? options.lineBreak : '');
+    tokens = Array.isArray(tokens) ? tokens : [tokens];
+    for (var i = 0, l = tokens.length; i < l; i++) {
+      var token = tokens[i];
+
+      if (typeof token == 'string') {
+        rebuilt.push(token);
+        continue;
+      }
+
+      var name = token.block || token.selector;
+      var body = token.block ? rebuild(token.body) : token.body;
+
+      if (body.length > 0)
+        rebuilt.push(name + '{' + body + '}');
+    }
+
+    return rebuilt.join(options.keepBreaks ? options.lineBreak : '');
   };
 
   return {
@@ -1173,6 +1386,8 @@ function SelectorsOptimizer(data, context, options) {
 };
 
 function Tokenizer(data, minifyContext) {
+  var chunker = new Chunker(data, 128);
+  var chunk = chunker.next();
   var flatBlock = /^@(font\-face|page|\-ms\-viewport|\-o\-viewport|viewport)/;
 
   var whatsNext = function(context) {
@@ -1180,17 +1395,25 @@ function Tokenizer(data, minifyContext) {
     var mode = context.mode;
     var closest;
 
+    if (chunk.length == context.cursor) {
+      if (chunker.isEmpty())
+        return null;
+
+      chunk = chunker.next();
+      context.cursor = 0;
+    }
+
     if (mode == 'body') {
-      closest = data.indexOf('}', cursor);
+      closest = chunk.indexOf('}', cursor);
       return closest > -1 ?
         [closest, 'bodyEnd'] :
         null;
     }
 
-    var nextSpecial = data.indexOf('@', cursor);
-    var nextEscape = mode == 'top' ? data.indexOf('__ESCAPED_COMMENT_CLEAN_CSS', cursor) : -1;
-    var nextBodyStart = data.indexOf('{', cursor);
-    var nextBodyEnd = data.indexOf('}', cursor);
+    var nextSpecial = chunk.indexOf('@', context.cursor);
+    var nextEscape = mode == 'top' ? chunk.indexOf('__ESCAPED_COMMENT_CLEAN_CSS', context.cursor) : -1;
+    var nextBodyStart = chunk.indexOf('{', context.cursor);
+    var nextBodyEnd = chunk.indexOf('}', context.cursor);
 
     closest = nextSpecial;
     if (closest == -1 || (nextEscape > -1 && nextEscape < closest))
@@ -1220,7 +1443,7 @@ function Tokenizer(data, minifyContext) {
     while (true) {
       var next = whatsNext(context);
       if (!next) {
-        var whatsLeft = data.substring(context.cursor);
+        var whatsLeft = chunk.substring(context.cursor);
         if (whatsLeft.length > 0) {
           tokenized.push(whatsLeft);
           context.cursor += whatsLeft.length;
@@ -1234,16 +1457,16 @@ function Tokenizer(data, minifyContext) {
       var oldMode;
 
       if (what == 'special') {
-        var fragment = data.substring(nextSpecial, context.cursor + '@font-face'.length + 1);
+        var fragment = chunk.substring(nextSpecial, context.cursor + '@font-face'.length + 1);
         var isSingle = fragment.indexOf('@import') === 0 || fragment.indexOf('@charset') === 0;
         if (isSingle) {
-          nextEnd = data.indexOf(';', nextSpecial + 1);
-          tokenized.push(data.substring(context.cursor, nextEnd + 1));
+          nextEnd = chunk.indexOf(';', nextSpecial + 1);
+          tokenized.push(chunk.substring(context.cursor, nextEnd + 1));
 
           context.cursor = nextEnd + 1;
         } else {
-          nextEnd = data.indexOf('{', nextSpecial + 1);
-          var block = data.substring(context.cursor, nextEnd).trim();
+          nextEnd = chunk.indexOf('{', nextSpecial + 1);
+          var block = chunk.substring(context.cursor, nextEnd).trim();
 
           var isFlat = flatBlock.test(block);
           oldMode = context.mode;
@@ -1255,13 +1478,13 @@ function Tokenizer(data, minifyContext) {
           tokenized.push({ block: block, body: specialBody });
         }
       } else if (what == 'escape') {
-        nextEnd = data.indexOf('__', nextSpecial + 1);
-        var escaped = data.substring(context.cursor, nextEnd + 2);
+        nextEnd = chunk.indexOf('__', nextSpecial + 1);
+        var escaped = chunk.substring(context.cursor, nextEnd + 2);
         tokenized.push(escaped);
 
         context.cursor = nextEnd + 2;
       } else if (what == 'bodyStart') {
-        var selector = data.substring(context.cursor, nextSpecial).trim();
+        var selector = chunk.substring(context.cursor, nextSpecial).trim();
 
         oldMode = context.mode;
         context.cursor = nextSpecial + 1;
@@ -1274,9 +1497,9 @@ function Tokenizer(data, minifyContext) {
         // extra closing brace at the top level can be safely ignored
         if (context.mode == 'top') {
           var at = context.cursor;
-          var warning = data[context.cursor] == '}' ?
-            'Unexpected \'}\' in \'' + data.substring(at - 20, at + 20) + '\'. Ignoring.' :
-            'Unexpected content: \'' + data.substring(at, nextSpecial + 1) + '\'. Ignoring.';
+          var warning = chunk[context.cursor] == '}' ?
+            'Unexpected \'}\' in \'' + chunk.substring(at - 20, at + 20) + '\'. Ignoring.' :
+            'Unexpected content: \'' + chunk.substring(at, nextSpecial + 1) + '\'. Ignoring.';
 
           minifyContext.warnings.push(warning);
           context.cursor = nextSpecial + 1;
@@ -1284,7 +1507,7 @@ function Tokenizer(data, minifyContext) {
         }
 
         if (context.mode != 'block')
-          tokenized = data.substring(context.cursor, nextSpecial);
+          tokenized = chunk.substring(context.cursor, nextSpecial);
 
         context.cursor = nextSpecial + 1;
 
@@ -1298,6 +1521,34 @@ function Tokenizer(data, minifyContext) {
   return {
     process: function() {
       return tokenize();
+    }
+  };
+};
+
+// Divides `data` into chunks of `chunkSize` for faster processing
+var Chunker = function(data, chunkSize) {
+  var chunks = [];
+  for (var cursor = 0, dataSize = data.length; cursor < dataSize;) {
+    var nextCursor = cursor + chunkSize > dataSize ?
+      dataSize - 1 :
+      cursor + chunkSize;
+
+    if (data[nextCursor] != '}')
+      nextCursor = data.indexOf('}', nextCursor);
+    if (nextCursor == -1)
+      nextCursor = data.length - 1;
+
+    chunks.push(data.substring(cursor, nextCursor + 1));
+    cursor = nextCursor + 1;
+  }
+
+  return {
+    isEmpty: function() {
+      return chunks.length === 0;
+    },
+
+    next: function() {
+      return chunks.shift() || '';
     }
   };
 };
@@ -1317,8 +1568,8 @@ function CommentsProcessor(keepSpecialComments, keepBreaks, lineBreak) {
       var nextEnd = 0;
       var cursor = 0;
 
-      for (; nextEnd < data.length; ) {
-        nextStart = data.indexOf('/*', nextEnd);
+      for (; nextEnd < data.length;) {
+        nextStart = data.indexOf('/*', cursor);
         nextEnd = data.indexOf('*/', nextStart + 2);
         if (nextStart == -1 || nextEnd == -1)
           break;
@@ -1551,7 +1802,7 @@ function UrlsProcessor() {
       var cursor = 0;
       var tempData = [];
 
-      for (; nextEnd < data.length; ) {
+      for (; nextEnd < data.length;) {
         nextStart = data.indexOf('url(', nextEnd);
         if (nextStart == -1)
           break;
@@ -1571,7 +1822,9 @@ function UrlsProcessor() {
     },
 
     restore: function(data) {
-      return data.replace(urls.placeholderRegExp, urls.restore);
+      return data.replace(urls.placeholderRegExp, function(placeholder) {
+        return urls.restore(placeholder).replace(/\s/g, '');
+      });
     }
   };
 };
@@ -1579,307 +1832,375 @@ function UrlsProcessor() {
 // lib/clean.js
 
 function CleanCSS(options) {
-  var lineBreak = process.platform == 'win32' ? '\r\n' : '\n';
-  var stats = {};
-  var context = {
-    errors: [],
-    warnings: []
-  };
-
   options = options || {};
+
+  // back compat
+  if (!(this instanceof CleanCSS))
+    return new CleanCSS(options);
+
   options.keepBreaks = options.keepBreaks || false;
 
   //active by default
-  if (options.processImport === undefined)
+  if (undefined === options.processImport)
     options.processImport = true;
 
-  var minify = function(data) {
-    if (Buffer.isBuffer(data))
-      data = data.toString();
+  if (options.selectorsMergeMode) {
+    console.warn('selectorsMergeMode is deprecated and will be removed in clean-css 2.2. Please use compatibility: \'%s\' option instead.', options.selectorsMergeMode);
+    options.compatibility = options.selectorsMergeMode;
+  }
 
-    var startedAt;
-    if (options.debug) {
-      startedAt = process.hrtime();
-      stats.originalSize = data.length;
-    }
+  this.options = options;
+  this.stats = {};
+  this.context = {
+    errors: [],
+    warnings: [],
+    debug: options.debug
+  };
+  this.errors = this.context.errors;
+  this.warnings = this.context.warnings;
+  this.lineBreak = process.platform == 'win32' ? '\r\n' : '\n';
+};
 
-    var replace = function() {
-      if (typeof arguments[0] == 'function')
-        arguments[0]();
-      else
-        data = data.replace.apply(data, arguments);
+CleanCSS.prototype.minify = function(data, callback) {
+  var options = this.options;
+
+  if (Buffer.isBuffer(data))
+    data = data.toString();
+
+  if (options.processImport) {
+    // inline all imports
+    var self = this;
+    var runner = callback ?
+      process.nextTick :
+      function(callback) { return callback(); };
+
+    return runner(function() {
+      return new ImportInliner(self.context, options.inliner).process(data, {
+        localOnly: !callback,
+        root: options.root || process.cwd(),
+        relativeTo: options.relativeTo,
+        whenDone: function(data) {
+          return minify.call(self, data, callback);
+        }
+      });
+    });
+  } else {
+    return minify.call(this, data, callback);
+  }
+};
+
+var minify = function(data, callback) {
+  var startedAt;
+  var stats = this.stats;
+  var options = this.options;
+  var context = this.context;
+  var lineBreak = this.lineBreak;
+
+  var commentsProcessor = new CommentsProcessor(
+    'keepSpecialComments' in options ? options.keepSpecialComments : '*',
+    options.keepBreaks,
+    lineBreak
+  );
+  var expressionsProcessor = new ExpressionsProcessor();
+  var freeTextProcessor = new FreeTextProcessor();
+  var urlsProcessor = new UrlsProcessor();
+
+  if (options.debug) {
+    this.startedAt = process.hrtime();
+    this.stats.originalSize = data.length;
+  }
+
+  var replace = function() {
+    if (typeof arguments[0] == 'function')
+      arguments[0]();
+    else
+      data = data.replace.apply(data, arguments);
+  };
+
+  // replace function
+  if (options.benchmark) {
+    var originalReplace = replace;
+    replace = function(pattern, replacement) {
+      var name = typeof pattern == 'function' ?
+        /function (\w+)\(/.exec(pattern.toString())[1] :
+        pattern;
+
+      var start = process.hrtime();
+      originalReplace(pattern, replacement);
+
+      var itTook = process.hrtime(start);
+      console.log('%d ms: ' + name, 1000 * itTook[0] + itTook[1] / 1000000);
     };
+  }
 
-    // replace function
-    if (options.benchmark) {
-      var originalReplace = replace;
-      replace = function(pattern, replacement) {
-        var name = typeof pattern == 'function' ?
-          /function (\w+)\(/.exec(pattern.toString())[1] :
-          pattern;
+  if (options.debug) {
+    startedAt = process.hrtime();
+    stats.originalSize = data.length;
+  }
 
-        var start = process.hrtime();
-        originalReplace(pattern, replacement);
+  replace(function escapeComments() {
+    data = commentsProcessor.escape(data);
+  });
 
-        var itTook = process.hrtime(start);
-        console.log('%d ms: ' + name, 1000 * itTook[0] + itTook[1] / 1000000.0);
-      };
-    }
+  // replace all escaped line breaks
+  replace(/\\(\r\n|\n)/gm, '');
 
-    var commentsProcessor = new CommentsProcessor(
-      'keepSpecialComments' in options ? options.keepSpecialComments : '*',
-      options.keepBreaks,
-      lineBreak
-    );
-    var expressionsProcessor = new ExpressionsProcessor();
-    var freeTextProcessor = new FreeTextProcessor();
-    var urlsProcessor = new UrlsProcessor();
-    var importInliner = new ImportInliner(context);
+  // strip parentheses in urls if possible (no spaces inside)
+  replace(/url\((['"])([^\)]+)['"]\)/g, function(match, quote, url) {
+    var unsafeDataURI = url.indexOf('data:') === 0 && url.match(/data:\w+\/[^;]+;base64,/) === null;
+    if (url.match(/[ \t]/g) !== null || unsafeDataURI)
+      return 'url(' + quote + url + quote + ')';
+    else
+      return 'url(' + url + ')';
+  });
 
-    if (options.processImport) {
-      // inline all imports
-      replace(function inlineImports() {
-        data = importInliner.process(data, {
-          root: options.root || process.cwd(),
-          relativeTo: options.relativeTo
-        });
-      });
-    }
+  // strip parentheses in animation & font names
+  replace(/(animation|animation\-name|font|font\-family):([^;}]+)/g, function(match, propertyName, def) {
+    return propertyName + ':' + def.replace(/['"]([a-zA-Z][a-zA-Z\d\-_]+)['"]/g, '$1');
+  });
 
-    replace(function escapeComments() {
-      data = commentsProcessor.escape(data);
+  // strip parentheses in @keyframes
+  replace(/@(\-moz\-|\-o\-|\-webkit\-)?keyframes ([^{]+)/g, function(match, prefix, name) {
+    prefix = prefix || '';
+    return '@' + prefix + 'keyframes ' + (name.indexOf(' ') > -1 ? name : name.replace(/['"]/g, ''));
+  });
+
+  // IE shorter filters, but only if single (IE 7 issue)
+  replace(/progid:DXImageTransform\.Microsoft\.(Alpha|Chroma)(\([^\)]+\))([;}'"])/g, function(match, filter, args, suffix) {
+    return filter.toLowerCase() + args + suffix;
+  });
+
+  replace(function escapeExpressions() {
+    data = expressionsProcessor.escape(data);
+  });
+
+  // strip parentheses in attribute values
+  replace(/\[([^\]]+)\]/g, function(match, content) {
+    var eqIndex = content.indexOf('=');
+    var singleQuoteIndex = content.indexOf('\'');
+    var doubleQuoteIndex = content.indexOf('"');
+    if (eqIndex < 0 && singleQuoteIndex < 0 && doubleQuoteIndex < 0)
+      return match;
+    if (singleQuoteIndex === 0 || doubleQuoteIndex === 0)
+      return match;
+
+    var key = content.substring(0, eqIndex);
+    var value = content.substring(eqIndex + 1, content.length);
+
+    if (/^['"](?:[a-zA-Z][a-zA-Z\d\-_]+)['"]$/.test(value))
+      return '[' + key + '=' + value.substring(1, value.length - 1) + ']';
+    else
+      return match;
+  });
+
+  replace(function escapeFreeText() {
+    data = freeTextProcessor.escape(data);
+  });
+
+  replace(function escapeUrls() {
+    data = urlsProcessor.escape(data);
+  });
+
+  // whitespace inside attribute selectors brackets
+  replace(/\[([^\]]+)\]/g, function(match) {
+    return match.replace(/\s/g, '');
+  });
+
+  // line breaks
+  replace(/[\r]?\n/g, ' ');
+
+  // multiple whitespace
+  replace(/[\t ]+/g, ' ');
+
+  // multiple semicolons (with optional whitespace)
+  replace(/;[ ]?;+/g, ';');
+
+  // multiple line breaks to one
+  replace(/ (?:\r\n|\n)/g, lineBreak);
+  replace(/(?:\r\n|\n)+/g, lineBreak);
+
+  // remove spaces around selectors
+  replace(/ ([+~>]) /g, '$1');
+
+  // remove extra spaces inside content
+  replace(/([!\(\{\}:;=,\n]) /g, '$1');
+  replace(/ ([!\)\{\};=,\n])/g, '$1');
+  replace(/(?:\r\n|\n)\}/g, '}');
+  replace(/([\{;,])(?:\r\n|\n)/g, '$1');
+  replace(/ :([^\{\};]+)([;}])/g, ':$1$2');
+
+  // restore spaces inside IE filters (IE 7 issue)
+  replace(/progid:[^(]+\(([^\)]+)/g, function(match) {
+    return match.replace(/,/g, ', ');
+  });
+
+  // trailing semicolons
+  replace(/;\}/g, '}');
+
+  replace(function hsl2Hex() {
+    data = new ColorHSLToHex(data).process();
+  });
+
+  replace(function rgb2Hex() {
+    data = new ColorRGBToHex(data).process();
+  });
+
+  replace(function longToShortHex() {
+    data = new ColorLongToShortHex(data).process();
+  });
+
+  replace(function shortenColors() {
+    data = new ColorShortener(data).process();
+  });
+
+  // replace font weight with numerical value
+  replace(/(font\-weight|font):(normal|bold)([ ;\}!])(\w*)/g, function(match, property, weight, suffix, next) {
+    if (suffix == ' ' && next.length > 0 && !/[.\d]/.test(next))
+      return match;
+
+    if (weight == 'normal')
+      return property + ':400' + suffix + next;
+    else if (weight == 'bold')
+      return property + ':700' + suffix + next;
+    else
+      return match;
+  });
+
+  // minus zero to zero
+  replace(/(\s|:|,|\()\-0([^\.])/g, '$10$2');
+  replace(/-0([,\)])/g, '0$1');
+
+  // zero(s) + value to value
+  replace(/(\s|:|,)0+([1-9])/g, '$1$2');
+
+  // round pixels to 2nd decimal place
+  replace(/\.(\d{3,})px/g, function(match, decimalPlaces) {
+    return '.' + Math.round(parseFloat('.' + decimalPlaces) * 100) + 'px';
+  });
+
+  // .0 to 0
+  replace(/(\D)\.0+(,|\}|\))/g, '$10$2');
+
+  // fraction zeros removal
+  replace(/\.([1-9]*)0+(\D)/g, function(match, nonZeroPart, suffix) {
+    return (nonZeroPart.length > 0 ? '.' : '') + nonZeroPart + suffix;
+  });
+
+  // zero + unit to zero
+  var units = ['px', 'em', 'ex', 'cm', 'mm', 'in', 'pt', 'pc', '%'];
+  if (['ie7', 'ie8'].indexOf(options.compatibility) == -1)
+    units.push('rem');
+
+  replace(new RegExp('(\\s|:|,)\\-?0(?:' + units.join('|') + ')', 'g'), '$1' + '0');
+  replace(new RegExp('(\\s|:|,)\\-?(\\d)\\.(\\D)', 'g'), '$1$2$3');
+  replace(new RegExp('rect\\(0(?:' + units.join('|') + ')', 'g'), 'rect(0');
+
+  // restore % in rgb/rgba and hsl/hsla
+  replace(/(rgb|rgba|hsl|hsla)\(([^\)]+)\)/g, function(match, colorFunction, colorDef) {
+    var tokens = colorDef.split(',');
+    var applies = colorFunction == 'hsl' || colorFunction == 'hsla' || tokens[0].indexOf('%') > -1;
+    if (!applies)
+      return match;
+
+    if (tokens[1].indexOf('%') == -1)
+      tokens[1] += '%';
+    if (tokens[2].indexOf('%') == -1)
+      tokens[2] += '%';
+    return colorFunction + '(' + tokens.join(',') + ')';
+  });
+
+  // none to 0
+  replace(/outline:none/g, 'outline:0');
+
+  // background:none to background:0 0
+  replace(/background:(?:none|transparent)([;}])/g, 'background:0 0$1');
+
+  // multiple zeros into one
+  replace(/box-shadow:0 0 0 0([^\.])/g, 'box-shadow:0 0$1');
+  replace(/:0 0 0 0([^\.])/g, ':0$1');
+  replace(/([: ,=\-])0\.(\d)/g, '$1.$2');
+
+  replace(function shorthandNotations() {
+    data = new ShorthandNotations(data).process();
+  });
+
+  // restore rect(...) zeros syntax for 4 zeros
+  replace(/rect\(\s?0(\s|,)0[ ,]0[ ,]0\s?\)/g, 'rect(0$10$10$10)');
+
+  // remove universal selector when not needed (*#id, *.class etc)
+  replace(/\*([\.#:\[])/g, '$1');
+
+  // Restore spaces inside calc back
+  replace(/calc\([^\}]+\}/g, function(match) {
+    return match.replace(/\+/g, ' + ');
+  });
+
+  // remove space after (rgba|hsla) declaration - see #165
+  replace(/(rgba|hsla)\(([^\)]+)\) /g, '$1($2)');
+
+  if (options.noAdvanced) {
+    if (options.keepBreaks)
+      replace(/\}/g, '}' + lineBreak);
+  } else {
+    replace(function optimizeSelectors() {
+      var mergeMode = ['ie7', 'ie8'].indexOf(options.compatibility) > -1 ?
+        options.compatibility :
+        '*';
+      data = new SelectorsOptimizer(data, context, {
+        keepBreaks: options.keepBreaks,
+        lineBreak: lineBreak,
+        selectorsMergeMode: mergeMode
+      }).process();
     });
+  }
 
-    // replace all escaped line breaks
-    replace(/\\(\r\n|\n)/mg, '');
+  replace(function restoreUrls() {
+    data = urlsProcessor.restore(data);
+  });
+  replace(function rebaseUrls() {
+    data = options.noRebase ? data : new UrlRebase(options, context).process(data);
+  });
+  replace(function restoreFreeText() {
+    data = freeTextProcessor.restore(data);
+  });
+  replace(function restoreComments() {
+    data = commentsProcessor.restore(data);
+  });
+  replace(function restoreExpressions() {
+    data = expressionsProcessor.restore(data);
+  });
 
-    // strip parentheses in urls if possible (no spaces inside)
-    replace(/url\((['"])([^\)]+)['"]\)/g, function(match, quote, url) {
-      var unsafeDataURI = url.indexOf('data:') === 0 && url.match(/data:\w+\/[^;]+;base64,/) === null;
-      if (url.match(/[ \t]/g) !== null || unsafeDataURI)
-        return 'url(' + quote + url + quote + ')';
-      else
-        return 'url(' + url + ')';
-    });
+  // move first charset to the beginning
+  replace(function moveCharset() {
+    // get first charset in stylesheet
+    var match = data.match(/@charset [^;]+;/);
+    var firstCharset = match ? match[0] : null;
+    if (!firstCharset)
+      return;
 
-    // strip parentheses in animation & font names
-    replace(/(animation|animation\-name|font|font\-family):([^;}]+)/g, function(match, propertyName, def) {
-      return propertyName + ':' + def.replace(/['"]([a-zA-Z][a-zA-Z\d\-_]+)['"]/g, '$1');
-    });
+    // reattach first charset and remove all subsequent
+    data = firstCharset +
+      (options.keepBreaks ? lineBreak : '') +
+      data.replace(new RegExp('@charset [^;]+;(' + lineBreak + ')?', 'g'), '').trim();
+  });
 
-    // strip parentheses in @keyframes
-    replace(/@(\-moz\-|\-o\-|\-webkit\-)?keyframes ([^{]+)/g, function(match, prefix, name) {
-      prefix = prefix || '';
-      return '@' + prefix + 'keyframes ' + (name.indexOf(' ') > -1 ? name : name.replace(/['"]/g, ''));
-    });
-
-    // IE shorter filters, but only if single (IE 7 issue)
-    replace(/progid:DXImageTransform\.Microsoft\.(Alpha|Chroma)(\([^\)]+\))([;}'"])/g, function(match, filter, args, suffix) {
-      return filter.toLowerCase() + args + suffix;
-    });
-
-    replace(function escapeExpressions() {
-      data = expressionsProcessor.escape(data);
-    });
-
-    // strip parentheses in attribute values
-    replace(/\[([^\]]+)\]/g, function(match, content) {
-      var eqIndex = content.indexOf('=');
-      var singleQuoteIndex = content.indexOf('\'');
-      var doubleQuoteIndex = content.indexOf('"');
-      if (eqIndex < 0 && singleQuoteIndex < 0 && doubleQuoteIndex < 0)
-        return match;
-      if (singleQuoteIndex === 0 || doubleQuoteIndex === 0)
-        return match;
-
-      var key = content.substring(0, eqIndex);
-      var value = content.substring(eqIndex + 1, content.length);
-
-      if (/^['"](?:[a-zA-Z][a-zA-Z\d\-_]+)['"]$/.test(value))
-        return '[' + key + '=' + value.substring(1, value.length - 1) + ']';
-      else
-        return match;
-    });
-
-    replace(function escapeFreeText() {
-      data = freeTextProcessor.escape(data);
-    });
-
-    replace(function escapeUrls() {
-      data = urlsProcessor.escape(data);
-    });
-
-    // line breaks
-    replace(/[\r]?\n/g, ' ');
-
-    // multiple whitespace
-    replace(/[\t ]+/g, ' ');
-
-    // multiple semicolons (with optional whitespace)
-    replace(/;[ ]?;+/g, ';');
-
-    // multiple line breaks to one
-    replace(/ (?:\r\n|\n)/g, lineBreak);
-    replace(/(?:\r\n|\n)+/g, lineBreak);
-
-    // remove spaces around selectors
-    replace(/ ([+~>]) /g, '$1');
-
-    // remove extra spaces inside content
-    replace(/([!\(\{\}:;=,\n]) /g, '$1');
-    replace(/ ([!\)\{\};=,\n])/g, '$1');
-    replace(/(?:\r\n|\n)\}/g, '}');
-    replace(/([\{;,])(?:\r\n|\n)/g, '$1');
-    replace(/ :([^\{\};]+)([;}])/g, ':$1$2');
-
-    // restore spaces inside IE filters (IE 7 issue)
-    replace(/progid:[^(]+\(([^\)]+)/g, function(match) {
-      return match.replace(/,/g, ', ');
-    });
-
-    // trailing semicolons
-    replace(/;\}/g, '}');
-
-    replace(function hsl2Hex() {
-      data = new ColorHSLToHex(data).process();
-    });
-
-    replace(function rgb2Hex() {
-      data = new ColorRGBToHex(data).process();
-    });
-
-    replace(function longToShortHex() {
-      data = new ColorLongToShortHex(data).process();
-    });
-
-    replace(function shortenColors() {
-      data = new ColorShortener(data).process();
-    });
-
-    // replace font weight with numerical value
-    replace(/(font\-weight|font):(normal|bold)([ ;\}!])(\w*)/g, function(match, property, weight, suffix, next) {
-      if (suffix == ' ' && next.length > 0 && !/[.\d]/.test(next))
-        return match;
-
-      if (weight == 'normal')
-        return property + ':400' + suffix + next;
-      else if (weight == 'bold')
-        return property + ':700' + suffix + next;
-      else
-        return match;
-    });
-
-    // zero + unit to zero
-    replace(/(\s|:|,)0(?:px|em|ex|cm|mm|in|pt|pc|%)/g, '$1' + '0');
-    replace(/rect\(0(?:px|em|ex|cm|mm|in|pt|pc|%)/g, 'rect(0');
-
-    // fraction zeros removal
-    replace(/\.([1-9]*)0+(\D)/g, function(match, nonZeroPart, suffix) {
-      return (nonZeroPart ? '.' : '') + nonZeroPart + suffix;
-    });
-
-    // restore 0% in hsl/hsla
-    replace(/(hsl|hsla)\(([^\)]+)\)/g, function(match, colorFunction, colorDef) {
-      var tokens = colorDef.split(',');
-      if (tokens[1] == '0')
-        tokens[1] = '0%';
-      if (tokens[2] == '0')
-        tokens[2] = '0%';
-      return colorFunction + '(' + tokens.join(',') + ')';
-    });
-
-    // none to 0
-    replace(/(border|border-top|border-right|border-bottom|border-left|outline):none/g, '$1:0');
-
-    // background:none to background:0 0
-    replace(/background:(?:none|transparent)([;}])/g, 'background:0 0$1');
-
-    // multiple zeros into one
-    replace(/box-shadow:0 0 0 0([^\.])/g, 'box-shadow:0 0$1');
-    replace(/:0 0 0 0([^\.])/g, ':0$1');
-    replace(/([: ,=\-])0\.(\d)/g, '$1.$2');
-
-    replace(function shorthandNotations() {
-      data = new ShorthandNotations(data).process();
-    });
-
-    // restore rect(...) zeros syntax for 4 zeros
-    replace(/rect\(\s?0(\s|,)0[ ,]0[ ,]0\s?\)/g, 'rect(0$10$10$10)');
-
-    // remove universal selector when not needed (*#id, *.class etc)
-    replace(/\*([\.#:\[])/g, '$1');
-
-    // Restore spaces inside calc back
-    replace(/calc\([^\}]+\}/g, function(match) {
-      return match.replace(/\+/g, ' + ');
-    });
-
-    if (options.noAdvanced) {
-      if (options.keepBreaks)
-        replace(/\}/g, '}' + lineBreak);
-    } else {
-      replace(function optimizeSelectors() {
-        data = new SelectorsOptimizer(data, context, {
-          keepBreaks: options.keepBreaks,
-          lineBreak: lineBreak,
-          selectorsMergeMode: options.selectorsMergeMode
-        }).process();
-      });
-    }
-
-    replace(function restoreUrls() {
-      data = urlsProcessor.restore(data);
-    });
-    replace(function rebaseUrls() {
-      data = options.noRebase ? data : new UrlRebase(options, context).process(data);
-    });
-    replace(function restoreFreeText() {
-      data = freeTextProcessor.restore(data);
-    });
-    replace(function restoreComments() {
-      data = commentsProcessor.restore(data);
-    });
-    replace(function restoreExpressions() {
-      data = expressionsProcessor.restore(data);
-    });
-
-    // move first charset to the beginning
-    replace(function moveCharset() {
-      // get first charset in stylesheet
-      var match = data.match(/@charset [^;]+;/);
-      var firstCharset = match ? match[0] : null;
-      if (!firstCharset)
-        return;
-
-      // reattach first charset and remove all subsequent
-      data = firstCharset +
-        (options.keepBreaks ? lineBreak : '') +
-        data.replace(new RegExp('@charset [^;]+;(' + lineBreak + ')?', 'g'), '').trim();
-    });
-
+  if (options.noAdvanced) {
     replace(function removeEmptySelectors() {
       data = new EmptyRemoval(data).process();
     });
+  }
 
-    // trim spaces at beginning and end
-    data = data.trim();
+  // trim spaces at beginning and end
+  data = data.trim();
 
-    if (options.debug) {
-      var elapsed = process.hrtime(startedAt);
-      stats.timeSpent = ~~(elapsed[0] * 1e3 + elapsed[1] / 1e6);
-      stats.efficiency = 1 - data.length / stats.originalSize;
-      stats.minifiedSize = data.length;
-    }
+  if (options.debug) {
+    var elapsed = process.hrtime(startedAt);
+    stats.timeSpent = ~~(elapsed[0] * 1e3 + elapsed[1] / 1e6);
+    stats.efficiency = 1 - data.length / stats.originalSize;
+    stats.minifiedSize = data.length;
+  }
 
-    return data;
-  };
-
-  return {
-    errors: context.errors,
-    lineBreak: lineBreak,
-    options: options,
-    minify: minify,
-    stats: stats,
-    warnings: context.warnings
-  };
+  return callback ?
+    callback.call(this, this.context.errors.length > 0 ? this.context.errors : null, data) :
+    data;
 };
