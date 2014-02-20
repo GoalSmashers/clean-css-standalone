@@ -13,7 +13,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env.__DIRECT__ && !process.stdin.isTTY;
-var version = '2.1.0';
+var version = '2.1.1';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -1136,14 +1136,46 @@ function SelectorsOptimizer(data, context, options) {
   var propertyOptimizer = new PropertyOptimizer();
 
   var cleanUpSelector = function(selectors) {
+    if (selectors.indexOf(',') == -1)
+      return selectors;
+
     var plain = [];
-    selectors = selectors.split(',');
+    var cursor = 0;
+    var lastComma = 0;
+    var noBrackets = selectors.indexOf('(') == -1;
+    var withinBrackets = function(idx) {
+      if (noBrackets)
+        return false;
 
-    for (var i = 0, l = selectors.length; i < l; i++) {
-      var sel = selectors[i];
+      var previousOpening = selectors.lastIndexOf('(', idx);
+      var previousClosing = selectors.lastIndexOf(')', idx);
 
-      if (plain.indexOf(sel) == -1)
-        plain.push(sel);
+      if (previousOpening == -1)
+        return false;
+      if (previousClosing > 0 && previousClosing < idx)
+        return false;
+
+      return true;
+    };
+
+    while (true) {
+      var nextComma = selectors.indexOf(',', cursor + 1);
+      var selector;
+
+      if (nextComma === -1) {
+        nextComma = selectors.length;
+      } else if (withinBrackets(nextComma)) {
+        cursor = nextComma + 1;
+        continue;
+      }
+      selector = selectors.substring(lastComma, nextComma);
+      lastComma = cursor = nextComma + 1;
+
+      if (plain.indexOf(selector) == -1)
+        plain.push(selector);
+
+      if (nextComma === selectors.length)
+        break;
     }
 
     return plain.sort().join(',');
