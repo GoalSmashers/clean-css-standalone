@@ -13,7 +13,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env.__DIRECT__ && !process.stdin.isTTY;
-var version = '2.1.1';
+var version = '2.1.2';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -808,7 +808,7 @@ function ImportInliner(context) {
 
 // lib/properties/*
 
-function PropertyOptimizer() {
+function PropertyOptimizer(compatibility) {
   var overridable = {
     'animation-delay': ['animation'],
     'animation-direction': ['animation'],
@@ -906,6 +906,8 @@ function PropertyOptimizer() {
     '-webkit-transition-timing-function': ['-webkit-transition']
   };
 
+  var IE_BACKSLASH_HACK = '\\9';
+
   var overrides = {};
   for (var granular in overridable) {
     for (var i = 0; i < overridable[granular].length; i++) {
@@ -923,7 +925,7 @@ function PropertyOptimizer() {
     var tokens = body.split(';');
     var keyValues = [];
 
-    if (tokens.length < 2)
+    if (tokens.length === 0 || (tokens.length == 1 && tokens[0].indexOf(IE_BACKSLASH_HACK) == -1))
       return;
 
     for (var i = 0, l = tokens.length; i < l; i++) {
@@ -935,7 +937,8 @@ function PropertyOptimizer() {
       keyValues.push([
         token.substring(0, firstColon),
         token.substring(firstColon + 1),
-        token.indexOf('!important') > -1
+        token.indexOf('!important') > -1,
+        token.indexOf(IE_BACKSLASH_HACK, firstColon + 1) > 0
       ]);
     }
 
@@ -974,10 +977,14 @@ function PropertyOptimizer() {
       var token = tokens[i];
       var property = token[0];
       var isImportant = token[2];
+      var isIEHack = token[3];
       var _property = (property == '-ms-filter' || property == 'filter') ?
         (lastProperty == 'background' || lastProperty == 'background-image' ? lastProperty : property) :
         property;
       var toOverridePosition = 0;
+
+      if (!compatibility && isIEHack)
+        continue;
 
       // comment is necessary - we assume that if two properties are one after another
       // then it is intentional way of redefining property which may not be widely supported
@@ -990,8 +997,14 @@ function PropertyOptimizer() {
           if (toOverridePosition == -1)
             break;
 
+          var lastToken = merged[toOverridePosition];
+          var wasIEHack = lastToken[3];
+
           if (merged[toOverridePosition][2] && !isImportant)
             continue tokensLoop;
+
+          if (compatibility && !wasIEHack && isIEHack)
+            break;
 
           merged.splice(toOverridePosition, 1);
           properties.splice(toOverridePosition, 1);
@@ -1133,7 +1146,7 @@ function SelectorsOptimizer(data, context, options) {
 
   var minificationsMade = [];
 
-  var propertyOptimizer = new PropertyOptimizer();
+  var propertyOptimizer = new PropertyOptimizer(options.compatibility);
 
   var cleanUpSelector = function(selectors) {
     if (selectors.indexOf(',') == -1)
@@ -2181,7 +2194,8 @@ var minify = function(data, callback) {
       data = new SelectorsOptimizer(data, context, {
         keepBreaks: options.keepBreaks,
         lineBreak: lineBreak,
-        selectorsMergeMode: mergeMode
+        selectorsMergeMode: mergeMode,
+        compatibility: options.compatibility
       }).process();
     });
   }
