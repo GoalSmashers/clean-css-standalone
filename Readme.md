@@ -1,3 +1,4 @@
+[![Build Status](https://secure.travis-ci.org/GoalSmashers/clean-css-standalone.png)](https://travis-ci.org/GoalSmashers/clean-css-standalone)
 [![devDependency Status](https://david-dm.org/GoalSmashers/clean-css-standalone/dev-status.png?theme=shields.io)](https://david-dm.org/GoalSmashers/clean-css-standalone#info=devDependencies)
 
 ## What is clean-css-standalone? ##
