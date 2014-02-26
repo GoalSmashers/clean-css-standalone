@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+/* jshint latedef: false */
+
 var util = require('util');
 var fs = require('fs');
 var path = require('path');
@@ -25,7 +27,7 @@ argv.has = function(option) {
   for (var i = 0, l = argv.length; i < l; i++) {
     if (!optionMatch.test(argv[i])) {
       var isNotAfterOption = i > 0 && (!optionMatch.test(argv[i - 1]) || i == l - 1);
-      var isOnlyArgument = i == 0 && l == 1;
+      var isOnlyArgument = i === 0 && l == 1;
       if (isNotAfterOption || isOnlyArgument) {
         argv._ = argv.slice(i);
         break;
@@ -60,7 +62,7 @@ if (argv.has('--timeout'))
 if (argv.has('-d'))
   cleanOptions.debug = true;
 if (argv.has('-r'))
-  cleanOptions.root = argv[argv.indexOf('-r') + 1]
+  cleanOptions.root = argv[argv.indexOf('-r') + 1];
 if (argv._ && !fromStdin) {
   options.source = argv._[0];
   cleanOptions.relativeTo = path.dirname(path.resolve(options.source));
@@ -137,7 +139,7 @@ function output(minified) {
     fs.writeFileSync(options.target, minified, 'utf8');
   else
     process.stdout.write(minified);
-};
+}
 
 function outputFeedback(messages, isError) {
   var prefix = isError ? '\x1B[31mERROR\x1B[39m:' : 'WARNING:';
@@ -145,7 +147,7 @@ function outputFeedback(messages, isError) {
   messages.forEach(function(message) {
     console.error('%s %s', prefix, message);
   });
-};
+}
 
 // lib/colors/*
 
@@ -212,7 +214,7 @@ function ColorHSLToHex(data) {
       });
     }
   };
-};
+}
 
 function ColorLongToShortHex(data) {
   return {
@@ -225,7 +227,7 @@ function ColorLongToShortHex(data) {
       });
     }
   };
-};
+}
 
 function ColorRGBToHex(data) {
   return {
@@ -240,7 +242,7 @@ function ColorRGBToHex(data) {
       });
     }
   };
-};
+}
 
 function ColorShortener(data) {
   var COLORS = {
@@ -415,7 +417,7 @@ function ColorShortener(data) {
       return data;
     }
   };
-};
+}
 
 // lib/images/*
 
@@ -446,7 +448,7 @@ function UrlRebase(options, context) {
   };
 
   return { process: process };
-};
+}
 
 var UrlRewriter = {
   process: function(data, options) {
@@ -804,7 +806,7 @@ function ImportInliner(context) {
 
   // Inlines all imports taking care of repetitions, unknown files, and circular dependencies
   return { process: process };
-};
+}
 
 // lib/properties/*
 
@@ -1051,7 +1053,7 @@ function PropertyOptimizer(compatibility) {
       return rebuild(optimized);
     }
   };
-};
+}
 
 function ShorthandNotations(data) {
   // shorthand notations
@@ -1102,7 +1104,7 @@ function ShorthandNotations(data) {
       return from2Values();
     }
   };
-};
+}
 
 // lib/selectors/*
 
@@ -1135,7 +1137,7 @@ function EmptyRemoval(data) {
       return stripEmpty(data);
     }
   };
-};
+}
 
 function SelectorsOptimizer(data, context, options) {
   var specialSelectors = {
@@ -1428,7 +1430,7 @@ function SelectorsOptimizer(data, context, options) {
       return rebuild(tokenized);
     }
   };
-};
+}
 
 function Tokenizer(data, minifyContext) {
   var chunker = new Chunker(data, 128);
@@ -1568,7 +1570,7 @@ function Tokenizer(data, minifyContext) {
       return tokenize();
     }
   };
-};
+}
 
 // Divides `data` into chunks of `chunkSize` for faster processing
 var Chunker = function(data, chunkSize) {
@@ -1656,7 +1658,7 @@ function CommentsProcessor(keepSpecialComments, keepBreaks, lineBreak) {
       });
     }
   };
-};
+}
 
 function EscapeStore(placeholderRoot) {
   placeholderRoot = 'ESCAPED_' + placeholderRoot + '_CLEAN_CSS';
@@ -1689,7 +1691,7 @@ function EscapeStore(placeholderRoot) {
       return placeholderToData[placeholder];
     }
   };
-};
+}
 
 function ExpressionsProcessor() {
   var expressions = new EscapeStore('EXPRESSION');
@@ -1757,7 +1759,7 @@ function ExpressionsProcessor() {
       return data.replace(expressions.placeholderRegExp, expressions.restore);
     }
   };
-};
+}
 
 function FreeTextProcessor() {
   var texts = new EscapeStore('FREE_TEXT');
@@ -1832,7 +1834,7 @@ function FreeTextProcessor() {
       return data.replace(texts.placeholderRegExp, texts.restore);
     }
   };
-};
+}
 
 function UrlsProcessor() {
   var urls = new EscapeStore('URL');
@@ -1872,7 +1874,7 @@ function UrlsProcessor() {
       });
     }
   };
-};
+}
 
 // lib/clean.js
 
@@ -1904,7 +1906,7 @@ function CleanCSS(options) {
   this.errors = this.context.errors;
   this.warnings = this.context.warnings;
   this.lineBreak = process.platform == 'win32' ? '\r\n' : '\n';
-};
+}
 
 CleanCSS.prototype.minify = function(data, callback) {
   var options = this.options;
