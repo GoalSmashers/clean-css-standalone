@@ -1,3 +1,5 @@
+[![devDependency Status](https://david-dm.org/GoalSmashers/clean-css-standalone/dev-status.png?theme=shields.io)](https://david-dm.org/GoalSmashers/clean-css-standalone#info=devDependencies)
+
 ## What is clean-css-standalone? ##
 
 Clean-css-standalone is (obviously) a standalone version of clean-css node.js library.
