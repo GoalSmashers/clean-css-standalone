@@ -15,7 +15,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env.__DIRECT__ && !process.stdin.isTTY;
-var version = '2.1.2';
+var version = '2.1.3';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -1274,7 +1274,7 @@ function SelectorsOptimizer(data, context, options) {
       if (typeof token == 'string' || token.block)
         continue;
 
-      selectors = selector.indexOf(',') > 0 ?
+      selectors = selector.indexOf(',') > 0 && !isSpecial(selector) ?
         selector.split(',').concat(selector) :
         [selector];
 
