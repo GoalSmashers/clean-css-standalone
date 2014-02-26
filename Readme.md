@@ -3,18 +3,18 @@
 
 ## What is clean-css-standalone? ##
 
-Clean-css-standalone is (obviously) a standalone version of clean-css node.js library.
+Clean-css-standalone is (obviously) a standalone version of clean-css CSS minifier.
 
-That is all you need to do is to grab **clean-css.js** file and put it somewhere in your project. The only dependency is node.js itself.
+All you need to do is to grab **clean-css.js** file and put it somewhere in your project. The only dependency is [Node.js](http://nodejs.org/) itself.
 
 ## Usage ##
 
 ### How to use it? ###
 
-    node path/to/clean-css.js -h
+    node path/to/clean-css.js
 
-See the [clean-css repository](https://github.com/GoalSmashers/clean-css) for examples (remember to replace 'cleancss' with 'node clean-css.js').
+See the [clean-css repository](https://github.com/GoalSmashers/clean-css) for examples (remember to always replace 'cleancss' with 'node clean-css.js').
 
 ## License ##
 
-Clean-css is released under the MIT license.
+Clean-css-standalone are released under the [MIT License](https://github.com/GoalSmashers/clean-css-standalone/blob/master/LICENSE).
