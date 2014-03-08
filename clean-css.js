@@ -15,7 +15,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env.__DIRECT__ && !process.stdin.isTTY;
-var version = '2.1.4';
+var version = '2.1.5';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -2117,8 +2117,10 @@ var minify = function(data, callback) {
   });
 
   // minus zero to zero
-  replace(/(\s|:|,|\()\-0([^\.])/g, '$10$2');
-  replace(/-0([,\)])/g, '0$1');
+  // repeated twice on purpose as if not it doesn't process rgba(-0,-0,-0,-0) correctly
+  var zerosRegexp = /(\s|:|,|\()\-0([^\.])/g;
+  replace(zerosRegexp, '$10$2');
+  replace(zerosRegexp, '$10$2');
 
   // zero(s) + value to value
   replace(/(\s|:|,)0+([1-9])/g, '$1$2');
