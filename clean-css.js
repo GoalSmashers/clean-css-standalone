@@ -15,7 +15,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env.__DIRECT__ && !process.stdin.isTTY;
-var version = '2.1.3';
+var version = '2.1.4';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -2003,6 +2003,9 @@ var minify = function(data, callback) {
 
   // strip parentheses in animation & font names
   replace(/(animation|animation\-name|font|font\-family):([^;}]+)/g, function(match, propertyName, def) {
+    if (def.indexOf('\'{') === 0)
+      return match;
+
     return propertyName + ':' + def.replace(/['"]([a-zA-Z][a-zA-Z\d\-_]+)['"]/g, '$1');
   });
 
