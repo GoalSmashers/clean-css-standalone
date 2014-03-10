@@ -15,7 +15,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env.__DIRECT__ && !process.stdin.isTTY;
-var version = '2.1.5';
+var version = '2.1.6';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -1120,7 +1120,7 @@ function EmptyRemoval(data) {
         break;
 
       var startsAt = nextEmpty - 1;
-      while (cssData[startsAt] && cssData[startsAt] != '}' && cssData[startsAt] != '{')
+      while (cssData[startsAt] && cssData[startsAt] != '}' && cssData[startsAt] != '{' && cssData[startsAt] != ';')
         startsAt--;
 
       tempData.push(cssData.substring(cursor, startsAt + 1));
