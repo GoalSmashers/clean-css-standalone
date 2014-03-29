@@ -15,7 +15,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env.__DIRECT__ && !process.stdin.isTTY;
-var version = '2.1.7';
+var version = '2.1.8';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -1294,13 +1294,17 @@ function SelectorsOptimizer(data, context, options) {
     matchedMoreThanOnce.forEach(function(selector) {
       var matchPositions = matched[selector];
       var bodies = [];
+      var splitBodies = [];
       var joinsAt = [];
       var j;
 
       for (j = 0, m = matchPositions.length; j < m; j++) {
         var body = tokens[matchPositions[j]].body;
+        var splitBody = body.split(';');
+
         bodies.push(body);
-        joinsAt.push((joinsAt[j - 1] || 0) + body.split(';').length);
+        splitBodies.push(splitBody);
+        joinsAt.push((joinsAt[j - 1] || 0) + splitBody.length);
       }
 
       var optimizedBody = propertyOptimizer.process(bodies.join(';'), joinsAt);
@@ -1310,8 +1314,8 @@ function SelectorsOptimizer(data, context, options) {
       var currentMatch = matchPositions.length - 1;
 
       while (currentMatch >= 0) {
-        if (bodies[currentMatch].indexOf(optimizedTokens[j]) > -1 && j > -1) {
-          j -= 1;
+        if (splitBodies[currentMatch].indexOf(optimizedTokens[j]) > -1 && j > -1) {
+          j--;
           continue;
         }
 
