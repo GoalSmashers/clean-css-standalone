@@ -15,7 +15,7 @@ var options = {
 };
 var cleanOptions = {};
 var fromStdin = !process.env.__DIRECT__ && !process.stdin.isTTY;
-var version = '2.1.6';
+var version = '2.1.7';
 
 // Arguments parsing (to drop optimist dependency)
 var argv = process.argv.slice(2);
@@ -558,7 +558,7 @@ function ImportInliner(context) {
         break;
       }
 
-      shared.done.push(data.substring(cursor, nextStart));
+      shared.done.push(data.substring(0, nextStart));
       shared.left.unshift([data.substring(nextEnd + 1), options]);
 
       return afterContent(nextStart) ?
